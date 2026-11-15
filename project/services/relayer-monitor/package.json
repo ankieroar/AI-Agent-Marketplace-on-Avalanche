@@ -1,0 +1,13 @@
+{
+  "name": "native-awm-relayer",
+  "version": "1.0.0",
+  "description": "Native Avalanche AWM / Teleporter Relayer for Warranty Dispute Protocol",
+  "main": "relayer.js",
+  "scripts": {
+    "start": "node relayer.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4"
+  }
+}

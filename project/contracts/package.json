@@ -1,0 +1,18 @@
+{
+  "name": "warranty-dispute-contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for Avalanche Private Warranty & Dispute Protocol",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:fuji": "hardhat run scripts/deploy-ping-pong.js --network fuji",
+    "deploy:disputeL1": "hardhat run scripts/deploy-ping-pong.js --network disputeL1",
+    "ping": "hardhat run scripts/test-ping.js --network fuji"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.22.15"
+  }
+}

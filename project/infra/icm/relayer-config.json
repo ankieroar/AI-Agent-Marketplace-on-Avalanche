@@ -1,0 +1,14 @@
+{
+  "fuji-c-chain": {
+    "subnet-id": "11111111111111111111111111111111LpoYY",
+    "blockchain-id": "yH8D7ThNJkxmtkuv2jgBa4P1Rn3Qpr4pPr7QYNfcdoS6k6HWp",
+    "rpc-url": "https://api.avax-test.network/ext/bc/C/rpc",
+    "ws-url": "wss://api.avax-test.network/ext/bc/C/ws"
+  },
+  "dispute-l1": {
+    "subnet-id": "2uZ9urRdTwnu1LRQtizioDZQj2pvQGpd7NpZPT3WoDWD3PWDio",
+    "blockchain-id": "CnnZk7teddWLgqy2BD74T6TDUD6oJJVR3DtZTAspXSDd2xCvz",
+    "rpc-url": "https://managed-nodes.avax.network/ext/bc/CnnZk7teddWLgqy2BD74T6TDUD6oJJVR3DtZTAspXSDd2xCvz/rpc",
+    "ws-url": "wss://managed-nodes.avax.network/ext/bc/CnnZk7teddWLgqy2BD74T6TDUD6oJJVR3DtZTAspXSDd2xCvz/ws"
+  }
+}
