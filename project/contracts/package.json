@@ -8,7 +8,8 @@
     "test": "hardhat test",
     "deploy:fuji": "hardhat run scripts/deploy-ping-pong.js --network fuji",
     "deploy:disputeL1": "hardhat run scripts/deploy-ping-pong.js --network disputeL1",
-    "ping": "hardhat run scripts/test-ping.js --network fuji"
+    "ping": "hardhat run scripts/test-ping.js --network fuji",
+    "delivery": "node scripts/check-delivery.js"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

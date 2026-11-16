@@ -41,7 +41,7 @@ async function main() {
   console.log("Ping transaction submitted. Hash:", tx.hash);
   const receipt = await tx.wait();
   console.log("Ping confirmed in C-Chain block:", receipt?.blockNumber);
-  console.log("Teleporter cross-chain message successfully dispatched!");
+  console.log("SOURCE CONFIRMED ONLY: Dispute L1 delivery is NOT verified.");
   console.log("Awaiting Relayer delivery to Dispute L1 PongReceiver...");
 }
 

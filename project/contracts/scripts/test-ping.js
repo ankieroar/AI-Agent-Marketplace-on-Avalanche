@@ -38,7 +38,8 @@ async function main() {
   console.log("Ping transaction broadcasted. Tx Hash:", tx.hash);
   const receipt = await tx.wait();
   console.log("Ping confirmed in Fuji block #" + receipt.blockNumber);
-  console.log("SUCCESS: Cross-chain message emitted! Relayer will deliver to Dispute L1.");
+  console.log("SOURCE CONFIRMED ONLY: PingSent emitted on Fuji; Dispute L1 delivery is NOT verified.");
+  console.log("Require an L1 transaction receipt with PongReceived. Run npm run delivery -- <L1_TX_HASH>.");
 }
 
 main().catch((error) => {

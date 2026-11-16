@@ -1,5 +1,5 @@
 /**
- * Native Cross-Chain AWM / Teleporter Relayer Daemon
+ * Authorized fallback relay (direct contract call, not an AWM proof relayer).
  * Listens for cross-chain ping messages between Fuji C-Chain and Dispute L1
  * Uses resilient block polling (eth_getLogs) compatible with public Avalanche RPCs.
  */
@@ -31,7 +31,6 @@ const processedTxs = new Set();
 
 async function deliverMessage(fujiWallet, pongContract, destinationAddress, messageID, messageText, timestamp, txHash) {
   if (processedTxs.has(txHash)) return;
-  processedTxs.add(txHash);
 
   console.log("\n--------------------------------------------------------------------------------");
   console.log(`[Cross-Chain Event Detected]`);
@@ -48,7 +47,7 @@ async function deliverMessage(fujiWallet, pongContract, destinationAddress, mess
     const abiCoder = ethers.AbiCoder.defaultAbiCoder();
     const encodedPayload = abiCoder.encode(
       ["address", "string", "uint256"],
-      [fujiWallet.address, messageText, timestamp]
+      [(await fujiWallet.provider.getTransaction(txHash)).from, messageText, timestamp]
     );
 
     const tx = await pongContract.receiveTeleporterMessage(
@@ -59,10 +58,19 @@ async function deliverMessage(fujiWallet, pongContract, destinationAddress, mess
 
     console.log(`  -> Delivery transaction broadcasted on Dispute L1! Hash: ${tx.hash}`);
     const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) throw new Error("Destination transaction failed");
+    const received = receipt.logs.some((log) => {
+      if (log.address.toLowerCase() !== PONG_RECEIVER_ADDRESS.toLowerCase()) return false;
+      try { return pongContract.interface.parseLog(log)?.name === "PongReceived"; }
+      catch { return false; }
+    });
+    if (!received) throw new Error("Destination receipt has no PongReceived event");
+    processedTxs.add(txHash);
     console.log(`  [SUCCESS] Message confirmed on Dispute L1 in block #${receipt.blockNumber}!`);
     console.log("--------------------------------------------------------------------------------\n");
   } catch (err) {
     console.error(`  [ERROR] Delivery failed:`, err.message);
+    throw err;
   }
 }
 
@@ -76,8 +84,8 @@ async function startRelayer() {
     process.exit(1);
   }
 
-  const fujiProvider = new ethers.JsonRpcProvider(FUJI_RPC);
-  const disputeProvider = new ethers.JsonRpcProvider(DISPUTE_L1_RPC);
+  const fujiProvider = new ethers.JsonRpcProvider(FUJI_RPC, undefined, { polling: true, batchMaxCount: 1 });
+  const disputeProvider = new ethers.JsonRpcProvider(DISPUTE_L1_RPC, undefined, { polling: true, batchMaxCount: 1 });
 
   const disputeWallet = new ethers.Wallet(PRIVATE_KEY, disputeProvider);
   const fujiWallet = new ethers.Wallet(PRIVATE_KEY, fujiProvider);
@@ -98,22 +106,28 @@ async function startRelayer() {
   const pongContract = new ethers.Contract(PONG_RECEIVER_ADDRESS, PONG_ABI, disputeWallet);
 
   let currentBlock = await fujiProvider.getBlockNumber();
-  let lastCheckedBlock = Math.max(0, currentBlock - 30);
+  let lastCheckedBlock = process.env.RELAYER_FROM_BLOCK === undefined
+    ? Math.max(0, currentBlock - 30) : Number(process.env.RELAYER_FROM_BLOCK);
+  if (!Number.isSafeInteger(lastCheckedBlock) || lastCheckedBlock < 0) throw new Error("Invalid RELAYER_FROM_BLOCK");
   console.log(`🛰️  Relayer active! Scanning from Fuji block #${lastCheckedBlock} onwards...`);
 
   async function poll() {
     try {
       const latestBlock = await fujiProvider.getBlockNumber();
       if (latestBlock >= lastCheckedBlock) {
-        const events = await pingContract.queryFilter("PingSent", lastCheckedBlock, latestBlock);
+        const toBlock = Math.min(latestBlock, lastCheckedBlock + 99);
+        const events = await pingContract.queryFilter("PingSent", lastCheckedBlock, toBlock);
         for (const ev of events) {
           const [destinationBlockchainID, destinationAddress, messageID, messageText, timestamp] = ev.args;
+          const targetChain = process.env.DISPUTE_L1_BLOCKCHAIN_ID_BYTES32 || "0x1ac4f03783f66f0733d25e7b8df833da1d739e7b20404cd2cfd867bf1d270539";
+          if (destinationBlockchainID.toLowerCase() !== targetChain.toLowerCase() ||
+              destinationAddress.toLowerCase() !== PONG_RECEIVER_ADDRESS.toLowerCase()) continue;
           await deliverMessage(fujiWallet, pongContract, destinationAddress, messageID, messageText, timestamp, ev.transactionHash);
         }
-        lastCheckedBlock = latestBlock + 1;
+        lastCheckedBlock = toBlock + 1;
       }
     } catch (err) {
-      // Keep going on temporary RPC glitch
+      console.error(`[RETRY] Fuji block ${lastCheckedBlock}: ${err.message}`);
     }
     setTimeout(poll, 3000);
   }
@@ -123,4 +137,5 @@ async function startRelayer() {
 
 startRelayer().catch((err) => {
   console.error("Relayer error:", err);
+  process.exitCode = 1;
 });
