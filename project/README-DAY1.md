@@ -1,19 +1,19 @@
 # Ngày 1 — Hướng dẫn chạy
 
-**Cập nhật mới nhất:** xem [DAY1-LATEST-STATUS.md](docs/DAY1-LATEST-STATUS.md). Proof thật đã verify trên L1; ping V2 đã được L1 nhận qua Warp thật và tự phát pong. Chiều pong về Fuji còn bị chặn ở chữ ký validator. Các mô tả lỗi bb và chưa nhận ping bên dưới là snapshot cũ.
+**Kết quả đã kiểm chứng:** xem [DAY1-LATEST-STATUS.md](docs/DAY1-LATEST-STATUS.md). Proof thật đã verify trên L1. Teleporter V2 đã nhận Fuji → L1 và L1 phát pong; L1 → Fuji chưa được xác nhận do validator quảng bá địa chỉ P2P riêng.
 
 ## Trạng thái thực tế (kiểm tra ngày 2026-11-17)
 
-**Ngày 1 chưa hoàn thành. Các lệnh bên dưới là hướng dẫn, không phải xác nhận tất cả đã chạy thành công.**
+Các trạng thái dưới đây phân biệt phần đã kiểm chứng với phần còn chờ.
 
 | Phần | Trạng thái |
 | --- | --- |
 | PostgreSQL/API/AES, test local | Đã chạy và pass |
 | DApp production build | Pass với Node 22; chưa kiểm thử ví trên trình duyệt |
 | AI thật | Chưa gọi; OPENROUTER_API_KEY chưa có trong project/.env tại lúc kiểm tra. Test hiện dùng mock |
-| Teleporter thật hai chiều | **CHƯA THÔNG**. Đã deploy hai strict apps và gửi nguồn Fuji; đang WAITING FOR REAL RELAYER, chưa có receipt nhận, chưa gửi chiều ngược |
+| Teleporter thật hai chiều | Một vòng V2 đã nhận Fuji → L1 qua Warp thật; L1 tự phát pong. **Chưa nhận pong về Fuji**, chưa đạt hai chiều |
 | Noir | Pass 2 test, đã tạo witness |
-| Barretenberg/verifier | bb lỗi Illegal instruction; chưa sinh proof/verifier, chưa đo size/deploy/verify trên L1 |
+| Barretenberg/verifier | Native `bb` v0.82.2 lỗi `Illegal instruction` trên máy/Docker CPU hiện tại. Đã dùng `@aztec/bb.js` v0.82.2 WASM thay thế: sinh proof thật, verify local, export verifier 11,037 bytes, deploy và verify proof trên L1 thành công |
 
 Bằng chứng và hash giao dịch: [DAY1-REPORT.md](docs/DAY1-REPORT.md), [icm-roundtrip.json](docs/icm-roundtrip.json). Đây là snapshot lúc kiểm tra, không tự cập nhật theo trạng thái mạng.
 
@@ -66,19 +66,33 @@ npm run build:web
 
 Mở localhost:3000, kết nối ví extension, chuyển Fuji 43113 hoặc Dispute L1 662831. Không cần WalletConnect key trả phí. Khung UI chưa mở case/giải ngân vì core contracts thuộc bước sau.
 
-## Noir hello-world
+## Noir hello-world (Windows và Linux)
 
-`circuits/hello_world` chứng minh x+y=z với x,y private và z public. Chạy script trong Linux có curl/tar/gzip; script cài binary vào `.tools` được gitignore:
+Circuit `circuits/hello_world` chứng minh `x + y = z`, trong đó x,y private và z public. Kết quả đã chạy thành công trên Windows với Docker.
+
+**Windows PowerShell** — từ thư mục `project`:
+
+```powershell
+cd services/prover
+npm ci --workspaces=false
+npm run day1
+```
+
+Docker Desktop cần đang chạy; `prepare-circuit.mjs` gọi Nargo beta.3 bên trong Docker. Sau đó Barretenberg WASM chạy bằng Node trên Windows. `.tools/noir` được mount vào container, không cần cài Linux/WSL riêng.
+
+**Linux hoặc WSL** — từ thư mục `project`:
 
 ```bash
 bash services/prover/day1.sh
 ```
 
-Pin Noir v1.0.0-beta.3 và BB v0.82.2 cho giao diện `bb contract`; không trộn với CLI mới dùng `write_solidity_verifier`. Cần mạng tải GitHub và SRS. Đọc license của các release trước khi phân phối; chưa có phí dịch vụ phát sinh từ script. Không có verifier giả khi tải/sinh proof thất bại.
+Script cài Nargo v1.0.0-beta.3 vào `.tools` nếu chưa có, chạy hai circuit tests và tạo witness; tiếp đó nó chạy `npm ci --workspaces=false` cùng `prove-wasm.mjs` dùng `@aztec/bb.js` v0.82.2. Cần Internet để tải Nargo và SRS công khai. Các file `.tools`, witness, proof và VK được gitignore.
 
-Trong phiên này nargo đã chạy test và execute thành công, nhưng native bb lỗi `Illegal instruction` ở Docker VM. Script trên chưa chạy trọn vẹn trên máy hiện tại. Cần máy Linux/WSL có CPU tương thích hoặc backend WASM đã kiểm chứng trước khi tiếp tục. Không chạy script deploy-verifier khi chưa sinh artifact thật.
+**Phân biệt lỗi bb:** executable native `bb` v0.82.2 từng thoát `Illegal instruction` trong môi trường CPU/Docker này. Đó là lỗi của binary native trên môi trường chạy. Pipeline đã chuyển sang Barretenberg WASM v0.82.2 và chạy thành công; vì vậy không cần native `bb` để làm tiếp. Đây là hai cách chạy backend Barretenberg khác nhau, không phải proof giả hay circuit bị bỏ qua.
 
-Sau khi sinh verifier thật:
+Lệnh hoàn tất sẽ in `Valid proof accepted`, `wrongPublicInputRejected: true`, kích thước proof và verifier. Verifier Solidity sinh ra là Apache-2.0; thư viện WASM MIT, license được lưu cạnh verifier. Circuit này chỉ là hello-world, chưa chứng minh policy/refund của marketplace.
+
+**Kiểm tra kích thước và deploy verifier** — sau `npm run day1`, từ `project/contracts`:
 
 ```powershell
 cd contracts
@@ -86,24 +100,45 @@ node scripts/verifier-size.js
 npx hardhat run scripts/deploy-verifier.js --network disputeL1
 ```
 
-Script kích thước chặn >24576 bytes; deployment lưu tx vào docs. Kiểm thử verify thật vẫn cần proof đúng định dạng/public inputs của đúng BB version; không xem deploy thành công là proof verified.
+`verifier-size.js` báo kích thước deployed bytecode và chặn nếu vượt 24,576 bytes. `deploy-verifier.js` deploy/reuse verifier có bytecode trùng; `verify-proof.js` kiểm tra proof đúng, proof bị sửa và giao dịch verify trên L1. Bằng chứng giao dịch đã chạy được lưu ở `docs/verifier-deployment.json` và `docs/zk-l1-verification.json`.
 
-## Teleporter thật hai chiều
+## Teleporter/ICM: hai bộ test, mục đích khác nhau
 
-**Cập nhật:** đã có V2 automatic ping/pong và official relayer tự host. Hướng dẫn mới: [README-ICM-SELFHOST.md](README-ICM-SELFHOST.md). `relayer.js` hiện khởi chạy official binary; fallback cũ chuyển sang `fallback-relayer.js`. Lần chạy thật đang bị chặn ở discovery/kết nối P2P validator L1 (0/100 weight); chưa nghiệm thu hai chiều.
+Messenger là transport ICM/Warp. App V2 `PingSenderV2`/`PongReceiverV2` xử lý nội dung ping/pong và xác thực chain + peer. Có hợp đồng/event hoặc tổng số tin nhắn tăng **không tự chứng minh** Warp message được xác thực; phải kiểm tra `TeleporterMessenger.messageReceived(messageID)` và receipt giao dịch destination.
+
+### A. Strict demo đời đầu (README trước đây)
+
+Các lệnh này kiểm tra contracts cũ (`TeleporterPingPong`), test, audit cấu hình chain và thử vòng đời relayer đời đầu:
 
 ```powershell
-cd contracts
+cd D:\26120200\team1_vietnam_unihack\project\contracts
 npx hardhat test
 node scripts/audit-day1.js
 npx hardhat run scripts/icm-roundtrip.js
 ```
 
-Roundtrip dùng PRIVATE_KEY trong `.env` và token testnet. Nó deploy strict receiver ở hai chain, khóa peer, gửi chiều thứ nhất; cần relayer ICM/AWM thật. Nếu báo WAITING thì cấu hình/khôi phục relayer Builder Hub rồi chạy lại; script giữ source hash/message ID để không gửi lại tùy tiện. Chỉ gửi chiều ngược khi chiều trước được chứng minh. Kết quả lưu tại `docs/icm-roundtrip.json`; chỉ `verified:true` cả hai chiều mới đạt mục tiêu.
+`npx hardhat test` chỉ chạy local unit tests. `audit-day1.js` là audit RPC/config, không gửi ping. `icm-roundtrip.js` là script cũ; nó dùng `.env` và Fuji test token, có thể gửi giao dịch. Kết quả của nó được lưu ở `docs/icm-roundtrip.json`. Đó là một bộ triển khai tách biệt với V2 bên dưới; đừng dùng snapshot cũ trong `icm-roundtrip.json` để kết luận trạng thái V2 mới nhất.
 
-Daemon cũ nay ở `services/relayer-monitor/fallback-relayer.js` là fallback, không thể giao tới strict receiver mới. Dừng daemon cũ khi demo ICM thật để tránh nhầm kết quả.
+### B. V2 đã deploy (khuyến nghị để kiểm tra trạng thái hiện tại)
 
-Không tự động deploy lại Messenger vì đã có bytecode ở cả hai chain; cần xác minh đúng version và registry trước. Upstream ICM mới dùng LicenseRef-Ecosystem: https://github.com/ava-labs/icm-contracts/blob/main/LICENSE . Việc có bytecode không chứng minh tương thích hay delivery.
+- `npm run icm:check`: **chỉ đọc**, không ký hoặc gửi giao dịch. Kiểm tra round V2 đã lưu: receipt nhận trên L1, Warp predicate, `Messenger.messageReceived`, event app và trạng thái chiều Fuji.
+- `npm run icm:roundtrip:api`: có thể **gửi giao dịch testnet** nếu chưa có ping đang chờ. Tiếp tục round V2 đã lưu, xin chữ ký từ API tổng hợp công khai, tự gửi giao dịch nhận tới Messenger rồi thử chiều về. Không cần API key; vẫn cần validator cung cấp đủ chữ ký. API trả HTTP 500 cho chữ ký L1 trong lần thử gần nhất, nên có thể dừng ở chiều về.
+- `npm run icm:roundtrip`: official ICM relayer tự host theo P2P, có thể gửi giao dịch testnet sau khi relayer sẵn sàng. Cần kết nối đủ quorum tới validator của cả chain. Validator L1 hiện được discovery quảng bá tại IP riêng `10.146.2.83:9651`, nên chưa đạt điều kiện này.
+- `npm run icm:forward`: chạy official relayer chỉ cho Fuji → L1; có thể gửi ping mới nếu không có round pending. Hữu ích để tách chẩn đoán chiều đi.
+- `npm run icm:prepare`: compile/deploy V2 nếu thiếu, cấu hình peer và có thể nạp gas testnet từ `PRIVATE_KEY` tới ví relayer mới. Đây là giao dịch có chi phí token testnet.
+- `npm run icm:install`: tải binary relayer pinned, kiểm tra checksum và build image Docker; không gửi giao dịch chain.
+
+Round V2 đã kiểm chứng: Fuji ping `0x74bf09996e74516b40f070d0a5f6637f0a330fb7c54af973244f4085368f9747`; L1 receive và tự phát pong `0x8f3e621b98c0acd319a353698c88c44e06cac1d7ea47e4160749198d3dd96722`. L1 Messenger và app đã nhận. Pong chưa nhận tại Fuji; `icm:check` hiện dự kiến cho `fujiMessengerReceived=false`, `fujiApplicationCompleted=false`.
+
+Để theo dõi round đã gửi mà không phát thêm giao dịch, dùng:
+
+```powershell
+npm run icm:check
+npm run icm:roundtrip:api
+npm run icm:check
+```
+
+Lệnh giữa có thể gửi delivery transaction cho round pending nhưng không tạo ping thứ hai khi round hiện tại còn pending. Chỉ kết luận thông hai chiều khi audit xác nhận `fujiMessengerReceived=true` **và** `fujiApplicationCompleted=true`, đồng thời có receipt/event trên Fuji. Xem [README-ICM-SELFHOST.md](README-ICM-SELFHOST.md) và [DAY1-LATEST-STATUS.md](docs/DAY1-LATEST-STATUS.md) để biết nguyên nhân blocker validator. Legacy `fallback-relayer.js` không chứng minh ICM/Warp thật.
 
 ## Cấu trúc
 
