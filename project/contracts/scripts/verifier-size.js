@@ -1,8 +1,8 @@
 const hre=require('hardhat');
 async function main(){
  await hre.run('compile');
- const names=(await hre.artifacts.getAllFullyQualifiedNames()).filter(n=>n.includes('/generated/')&&n.endsWith(':HonkVerifier'));
- if(names.length!==1)throw new Error('Generate verifier first; expected one HonkVerifier artifact');
+ const names=(await hre.artifacts.getAllFullyQualifiedNames()).filter(n=>n.includes('/generated/')&&/:UltraVerifier$|:HonkVerifier$/.test(n));
+ if(names.length!==1)throw new Error('Generate verifier first; expected one UltraVerifier or HonkVerifier artifact');
  const artifact=await hre.artifacts.readArtifact(names[0]);
  const bytes=(artifact.deployedBytecode.length-2)/2;
  console.log(JSON.stringify({contract:names[0],deployedBytecodeBytes:bytes,limit:24576}));

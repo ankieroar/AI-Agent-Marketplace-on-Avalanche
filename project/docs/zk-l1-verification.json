@@ -1,0 +1,15 @@
+{
+  "chainId": 662831,
+  "verifier": "0x4e5FE516e05804bc27AE0a67d7Ce8750bd8aD955",
+  "transactionHash": "0xc9683a998cfe4cab2aeb9aaef60c4cd6e0a17e508c6bebe6fad23a735b6a1b87",
+  "block": 12,
+  "gasUsed": "430653",
+  "validProofAccepted": true,
+  "wrongPublicInputRejected": true,
+  "tamperedProofRejected": true,
+  "proofKeccak256": "0x32be14a510c0ada8d6af29a64e7d04e9bd29f0cd8937fb7d225cf4be7ab5ce86",
+  "publicInputs": [
+    "0x0000000000000000000000000000000000000000000000000000000000000005"
+  ],
+  "checkedAt": "2026-11-17T12:11:24.812Z"
+}

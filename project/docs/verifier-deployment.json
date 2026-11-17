@@ -1,0 +1,9 @@
+{
+  "address": "0x4e5FE516e05804bc27AE0a67d7Ce8750bd8aD955",
+  "deployTx": "0x47f6c3d5b4e5961ef1b469103be823e155002acc45dc8bbf7045942ee9174f5b",
+  "block": 11,
+  "deployedBytecodeBytes": 11037,
+  "chainId": 662831,
+  "contract": "contracts/generated/UltraVerifier.sol:UltraVerifier",
+  "codeHash": "0xffe61dd0b4d73880316d9b2b8769b82d9c7f1161e38a0ba04730146ec7aa80eb"
+}

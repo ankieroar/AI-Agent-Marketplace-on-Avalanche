@@ -1,5 +1,22 @@
 # Ngày 1 — Hướng dẫn chạy
 
+**Cập nhật mới nhất:** xem [DAY1-LATEST-STATUS.md](docs/DAY1-LATEST-STATUS.md). Proof thật đã verify trên L1; ping V2 đã được L1 nhận qua Warp thật và tự phát pong. Chiều pong về Fuji còn bị chặn ở chữ ký validator. Các mô tả lỗi bb và chưa nhận ping bên dưới là snapshot cũ.
+
+## Trạng thái thực tế (kiểm tra ngày 2026-11-17)
+
+**Ngày 1 chưa hoàn thành. Các lệnh bên dưới là hướng dẫn, không phải xác nhận tất cả đã chạy thành công.**
+
+| Phần | Trạng thái |
+| --- | --- |
+| PostgreSQL/API/AES, test local | Đã chạy và pass |
+| DApp production build | Pass với Node 22; chưa kiểm thử ví trên trình duyệt |
+| AI thật | Chưa gọi; OPENROUTER_API_KEY chưa có trong project/.env tại lúc kiểm tra. Test hiện dùng mock |
+| Teleporter thật hai chiều | **CHƯA THÔNG**. Đã deploy hai strict apps và gửi nguồn Fuji; đang WAITING FOR REAL RELAYER, chưa có receipt nhận, chưa gửi chiều ngược |
+| Noir | Pass 2 test, đã tạo witness |
+| Barretenberg/verifier | bb lỗi Illegal instruction; chưa sinh proof/verifier, chưa đo size/deploy/verify trên L1 |
+
+Bằng chứng và hash giao dịch: [DAY1-REPORT.md](docs/DAY1-REPORT.md), [icm-roundtrip.json](docs/icm-roundtrip.json). Đây là snapshot lúc kiểm tra, không tự cập nhật theo trạng thái mạng.
+
 ## Cài đặt monorepo
 
 Từ thư mục `project`, dùng Node 22 LTS để tránh cảnh báo engine từ dependency ví:
@@ -73,6 +90,8 @@ Script kích thước chặn >24576 bytes; deployment lưu tx vào docs. Kiểm 
 
 ## Teleporter thật hai chiều
 
+**Cập nhật:** đã có V2 automatic ping/pong và official relayer tự host. Hướng dẫn mới: [README-ICM-SELFHOST.md](README-ICM-SELFHOST.md). `relayer.js` hiện khởi chạy official binary; fallback cũ chuyển sang `fallback-relayer.js`. Lần chạy thật đang bị chặn ở discovery/kết nối P2P validator L1 (0/100 weight); chưa nghiệm thu hai chiều.
+
 ```powershell
 cd contracts
 npx hardhat test
@@ -82,7 +101,7 @@ npx hardhat run scripts/icm-roundtrip.js
 
 Roundtrip dùng PRIVATE_KEY trong `.env` và token testnet. Nó deploy strict receiver ở hai chain, khóa peer, gửi chiều thứ nhất; cần relayer ICM/AWM thật. Nếu báo WAITING thì cấu hình/khôi phục relayer Builder Hub rồi chạy lại; script giữ source hash/message ID để không gửi lại tùy tiện. Chỉ gửi chiều ngược khi chiều trước được chứng minh. Kết quả lưu tại `docs/icm-roundtrip.json`; chỉ `verified:true` cả hai chiều mới đạt mục tiêu.
 
-Daemon `services/relayer-monitor/relayer.js` cũ là fallback, không thể giao tới strict receiver mới. Dừng daemon cũ khi demo ICM thật để tránh nhầm kết quả.
+Daemon cũ nay ở `services/relayer-monitor/fallback-relayer.js` là fallback, không thể giao tới strict receiver mới. Dừng daemon cũ khi demo ICM thật để tránh nhầm kết quả.
 
 Không tự động deploy lại Messenger vì đã có bytecode ở cả hai chain; cần xác minh đúng version và registry trước. Upstream ICM mới dùng LicenseRef-Ecosystem: https://github.com/ava-labs/icm-contracts/blob/main/LICENSE . Việc có bytecode không chứng minh tương thích hay delivery.
 

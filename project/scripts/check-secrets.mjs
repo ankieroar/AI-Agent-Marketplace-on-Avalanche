@@ -5,6 +5,7 @@ const root=path.resolve(import.meta.dirname,'../..');
 const env=readFileSync(path.join(root,'project/.env'),'utf8');
 const names=/^(PRIVATE_KEY|PROOF_SUBMITTER_PRIVATE_KEY|OPENROUTER_API_KEY|GEMINI_API_KEY|GROQ_API_KEY|API_ACCESS_TOKEN|AES_KEY_HEX|ENCRYPTION_KEY|POSTGRES_PASSWORD|DATABASE_URL)$/;
 const secrets=env.split(/\r?\n/).flatMap(line=>{const i=line.indexOf('=');if(i<0||!names.test(line.slice(0,i)))return [];const value=line.slice(i+1).trim().replace(/^['"]|['"]$/g,'');return value.length>=16?[value,value.startsWith('0x')?value.slice(2):value]:[];});
+try{const signer=JSON.parse(readFileSync(path.join(root,'project/.runtime/icm/signer.json'),'utf8'));if(signer.privateKey)secrets.push(signer.privateKey,signer.privateKey.replace(/^0x/,''));}catch(e){if(e.code!=='ENOENT')throw e;}
 const files=execFileSync('git',['ls-files','--cached','--others','--exclude-standard','-z'],{cwd:root}).toString().split('\0').filter(Boolean);
 const findings=[];
 for(const file of files){let content;try{content=readFileSync(path.join(root,file),'utf8');}catch{continue;}

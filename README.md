@@ -1,5 +1,7 @@
 # Avalanche AI Agent Marketplace & Private Dispute Protocol
 
+**Mốc ngày 1:** đã chốt công việc; xem [báo cáo kiểm chứng và các mục tồn đọng](project/docs/DAY1-LATEST-STATUS.md). Proof hello-world đã verify trên Dispute L1. Teleporter Fuji → L1 đã xác thực; chiều về và kiểm thử AI live còn tồn đọng. Hướng dẫn chạy: [README-DAY1.md](project/README-DAY1.md).
+
 > **Trạng thái:** Tài liệu thiết kế và kế hoạch triển khai (**planned MVP**, không phải tuyên bố đã hoàn thành).  
 > **Nhóm:** 3 người · Hackathon 5 ngày · Ngôn ngữ tài liệu: Tiếng Việt.  
 > **Mạng thử nghiệm:** Avalanche **Fuji C-Chain** + một **Avalanche EVM L1 tùy chỉnh (Dispute L1)**.  

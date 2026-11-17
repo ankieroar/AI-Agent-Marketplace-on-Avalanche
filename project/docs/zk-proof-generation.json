@@ -1,0 +1,19 @@
+{
+  "backend": "@aztec/bb.js@0.82.2",
+  "provingSystem": "UltraPlonk",
+  "runtime": "WebAssembly",
+  "noirVersion": "1.0.0-beta.3+ceaa1986628197bd1170147f6a07f0f98d21030a",
+  "circuit": "hello_world",
+  "publicInputs": [
+    "0x0000000000000000000000000000000000000000000000000000000000000005"
+  ],
+  "proofBytes": 2144,
+  "vkBytes": 1779,
+  "circuitSha256": "454f09af424c04cd5420232f83648db18439e3ca4840848a78d57448a6b7fa2e",
+  "proofSha256": "c0657f7a86d59ed98e81f7397756aebb9869416e83fbb01d0f89a841327dabfa",
+  "vkSha256": "c8711abad53c93638ffc552479884975b9bb8de652641d55f4467e2b6c03fd6d",
+  "verifierSourceSha256": "0b03b3fad7fe8e977907482d6586f53f4de903897ed1470ad9b9a8877a7b822b",
+  "validProofAccepted": true,
+  "wrongPublicInputRejected": true,
+  "generatedAt": "2026-11-17T12:06:55.136Z"
+}

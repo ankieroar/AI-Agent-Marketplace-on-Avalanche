@@ -9,7 +9,13 @@
     "deploy:fuji": "hardhat run scripts/deploy-ping-pong.js --network fuji",
     "deploy:disputeL1": "hardhat run scripts/deploy-ping-pong.js --network disputeL1",
     "ping": "hardhat run scripts/test-ping.js --network fuji",
-    "delivery": "node scripts/check-delivery.js"
+    "delivery": "node scripts/check-delivery.js",
+    "icm:install": "node ../services/relayer-monitor/install-icm.js",
+    "icm:prepare": "hardhat compile && node scripts/icm-cycle.js --prepare",
+    "icm:roundtrip": "hardhat compile && node scripts/icm-cycle.js",
+    "icm:roundtrip:api": "hardhat compile && node scripts/icm-api-cycle.js",
+    "icm:forward": "hardhat compile && node scripts/icm-cycle.js --forward-only",
+    "icm:check": "node scripts/check-icm-v2.js"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

@@ -45,6 +45,7 @@ Thumbs.db
 tmp/
 temp/
 project/.tools/
+project/.runtime/
 project/.next/
 *.tsbuildinfo
 

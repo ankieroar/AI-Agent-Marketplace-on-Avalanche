@@ -1,5 +1,7 @@
 # Báo cáo triển khai ngày 1
 
+**Bản cập nhật:** [DAY1-LATEST-STATUS.md](DAY1-LATEST-STATUS.md) chứa kết quả proof verify thật trên L1 và ping V2 đã nhận. Các trạng thái bên dưới là báo cáo ban đầu, không phản ánh kết quả mới này.
+
 Ngày thực hiện: 2026-11-17. Chưa đạt toàn bộ Go/No-Go ngày 1: relayer ICM thật, Barretenberg proof/verifier và LLM live còn thiếu điều kiện kiểm thử. Không dùng kết quả fallback thay thế bằng chứng Teleporter.
 
 ## Đã triển khai và kiểm chứng

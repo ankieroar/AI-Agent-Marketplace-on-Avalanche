@@ -1,0 +1,8 @@
+{
+  "name": "@warranty/prover",
+  "private": true,
+  "scripts": { "prove": "node prove-wasm.mjs", "day1": "node prepare-circuit.mjs && node prove-wasm.mjs" },
+  "dependencies": {
+    "@aztec/bb.js": "0.82.2"
+  }
+}

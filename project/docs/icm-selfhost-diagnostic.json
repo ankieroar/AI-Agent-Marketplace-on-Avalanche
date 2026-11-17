@@ -1,0 +1,23 @@
+{
+  "version": "icm-relayer-v1.8.4",
+  "result": "BLOCKED_L1_P2P_DISCOVERY",
+  "testnetOnly": true,
+  "fuji": {
+    "quorumNumerator": 67,
+    "connectedWeight": "36200083622036756",
+    "totalValidatorWeight": "36200110048231080",
+    "numConnectedPeers": 42,
+    "sufficientStake": true
+  },
+  "disputeL1": {
+    "nodeID": "NodeID-Fvet9DW7LD65DL8ek1de49xBXUiJJgEt4",
+    "quorumNumerator": 67,
+    "connectedWeight": "0",
+    "totalValidatorWeight": "100",
+    "numConnectedPeers": 0,
+    "sufficientStake": false
+  },
+  "error": "Failed to initialize connections and check stake: failed to connect to sufficient stake: context deadline exceeded",
+  "nextRequired": "Validator public P2P IP:port, allow incoming peers and serve Warp signatures; set L1_VALIDATOR_P2P for manually-tracked-peers",
+  "v2RoundSent": false
+}
