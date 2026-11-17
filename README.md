@@ -1,634 +1,763 @@
-# Avalanche Private Warranty & Dispute Protocol — Quy trình kỹ thuật và kế hoạch triển khai
+# Avalanche AI Agent Marketplace & Private Dispute Protocol
 
-> **Tên dự án tạm thời:** Giao thức xử lý khiếu nại và bảo hành bảo vệ quyền riêng tư trên Avalanche  
-> **Mục tiêu:** MVP sẵn sàng cho hackathon (team 3 người, 5 ngày), với kiến trúc có thể mở rộng thành AI Agent Marketplace  
-> **Mạng demo chính:** Avalanche Fuji C-Chain + một Avalanche L1 tùy chỉnh trên Fuji  
-> **Nguyên tắc kiến trúc:** Một câu chuyện sản phẩm xuyên suốt; mỗi thành phần nâng cao (L1, ICM, AI, ZK) phải giải quyết đúng một bài toán cụ thể.
+> **Trạng thái:** Tài liệu thiết kế và kế hoạch triển khai (**planned MVP**, không phải tuyên bố đã hoàn thành).  
+> **Nhóm:** 3 người · Hackathon 5 ngày · Ngôn ngữ tài liệu: Tiếng Việt.  
+> **Mạng thử nghiệm:** Avalanche **Fuji C-Chain** + một **Avalanche EVM L1 tùy chỉnh (Dispute L1)**.  
+> **Định hướng:** Bắt đầu bằng **marketplace dạng curated với 1 Service Agent thực sự có thể mua và sử dụng**, lấy **Private Dispute Protocol** và 3 Dispute Agents làm điểm khác biệt. Mở rộng thành marketplace đa agent/đa nhà cung cấp sau hackathon.  
+> **Kế hoạch công việc chi tiết:** [`AVALANCHE_DISPUTE_TO_MARKETPLACE_PLAN_DAY2_DAY5.md`](./AVALANCHE_DISPUTE_TO_MARKETPLACE_PLAN_DAY2_DAY5.md).
 
----
+## Mục lục
 
-## 1. Khuyến nghị tổng quan
-
-Để tránh lỗi ghép hai sản phẩm rời rạc (sàn bán license AI agent + khiếu nại bảo hành), MVP tập trung vào **một câu chuyện thống nhất**: **Giao thức xử lý khiếu nại & bảo hành bảo vệ quyền riêng tư cho thương mại trên Avalanche** (trong đó pipeline 3 AI agent đóng vai trò chuẩn bị và đối chiếu hồ sơ tự động; phần mở rộng thành marketplace cho bên thứ ba đăng agent và bán license sẽ nằm ở giai đoạn sau hackathon).
-
-Kiến trúc sử dụng **hai Avalanche chain**:
-
-1. **Fuji C-Chain — Miền Thương mại công khai và Ký quỹ thanh toán (`SettlementEscrow`)**
-   - Người bán (Merchant) đăng ký chính sách bảo hành, đặt cọc bảo chứng vào `SettlementEscrow`, và ghi nhận `policyCommitment` (commitment có ngẫu nhiên hóa của điều khoản hợp đồng/bảo hành) lên chain **ngay tại thời điểm mua hàng**.
-   - Người mua (Buyer) mở hồ sơ khiếu nại công khai và nhận tiền bồi thường từ escrow khi khiếu nại được duyệt.
-   - Trạng thái công khai để người dùng và ban giám khảo có thể kiểm tra trên EVM block explorer quen thuộc.
-
-2. **Avalanche L1 tùy chỉnh (`Dispute L1`) — Miền quy trình xử lý tranh chấp**
-   - Một EVM chain chuyên biệt quản lý state machine của tranh chấp, tham chiếu phiên bản chính sách, xác minh ZK proof, phê duyệt của Người bán / Trọng tài và nhật ký kiểm toán.
-   - Tập validator và cấu hình chain được quản lý riêng, độc lập với C-Chain (tách biệt tải xử lý tranh chấp và chi phí gas khỏi mạng thương mại công khai).
-
-3. **Teleporter / Interchain Messaging (ICM)**
-   - Chuyển các thông điệp đã được xác thực giữa hai Avalanche chain.
-   - C-Chain phát sự kiện/thông điệp `CaseOpened` (kèm `policyCommitment` đã lưu lúc mua và `claimTimestamp = block.timestamp`); L1 ghi nhận hồ sơ. Sau khi proof được xác minh và Người bán/Trọng tài duyệt, L1 phát `CaseResolutionCommitted`; C-Chain nhận thông điệp và mở khóa giải ngân/hoàn tiền từ `SettlementEscrow`.
-
-4. **Quyền riêng tư + ZK (Noir + Barretenberg)**
-   - Hợp đồng nhạy cảm, hóa đơn, bằng chứng, giá trị bồi thường tối đa và ngày mua được giữ ở dạng mã hóa ngoài chain.
-   - Một circuit **Noir + Barretenberg** chứng minh: (a) các điều khoản bí mật khớp với `policyCommitment` đã được Người bán cam kết on-chain **từ lúc mua hàng**, (b) `claimTimestamp` (public input từ `block.timestamp`) nằm trong thời hạn bảo hành, và (c) số tiền bồi thường đề xuất không vượt quá mức tối đa — mà không tiết lộ các giá trị bí mật đó.
-   - **zkML không nằm trong phạm vi MVP** (để tránh quá tải cho team 3 người trong 5 ngày; có thể phát triển sau hackathon).
-
-### Vì sao đây là phương án cân bằng tốt?
-
-Thiết kế này giữ nguyên toàn bộ chiều sâu kỹ thuật (smart contract escrow, EVM L1 tùy chỉnh, nhắn tin xuyên chain Teleporter, điều phối AI pipeline, mã hóa và ZK circuit), đồng thời khắc phục lỗ hổng logic của việc backend tự tạo commitment lúc khiếu nại và loại bỏ phần mua license agent thừa thãi khỏi luồng chính của người mua.
-
-**Điều kiện để MVP được xem là thành công:** Người bán ghi nhận `policyCommitment` và nạp cọc bảo hành trên C-Chain; Người mua mở tranh chấp trên C-Chain; hồ sơ chuyển tiếp sang Dispute L1 qua Teleporter; AI pipeline xử lý bằng chứng; ZK proof hợp lệ được xác minh on-chain trên L1; Người bán (hoặc Trọng tài) phê duyệt; kết quả quay về C-Chain qua Teleporter và `SettlementEscrow` giải ngân tiền bồi thường.
+1. [Tổng quan và quyết định phạm vi](#1-tổng-quan-và-quyết-định-phạm-vi)
+2. [Sản phẩm, vai trò và chức năng](#2-sản-phẩm-vai-trò-và-chức-năng)
+3. [Kiến trúc hệ thống](#3-kiến-trúc-hệ-thống)
+4. [Luồng nghiệp vụ và dòng tiền](#4-luồng-nghiệp-vụ-và-dòng-tiền)
+5. [Avalanche L1, Teleporter và ICM](#5-avalanche-l1-teleporter-và-icm)
+6. [Smart contracts và state machine](#6-smart-contracts-và-state-machine)
+7. [Service Agent và 3 Dispute Agents](#7-service-agent-và-3-dispute-agents)
+8. [Dữ liệu, bảo mật và quyền riêng tư](#8-dữ-liệu-bảo-mật-và-quyền-riêng-tư)
+9. [ZK circuit: chứng minh điều khoản dịch vụ](#9-zk-circuit-chứng-minh-điều-khoản-dịch-vụ)
+10. [Backend, API và tích hợp](#10-backend-api-và-tích-hợp)
+11. [Kế hoạch hackathon Ngày 1–5](#11-kế-hoạch-hackathon-ngày-15)
+12. [Phân công 3 người và quy trình phối hợp](#12-phân-công-3-người-và-quy-trình-phối-hợp)
+13. [Cấu trúc repository](#13-cấu-trúc-repository)
+14. [Kiểm thử và tiêu chí nghiệm thu](#14-kiểm-thử-và-tiêu-chí-nghiệm-thu)
+15. [Kịch bản demo và pitch](#15-kịch-bản-demo-và-pitch)
+16. [Ưu tiên P0/P1/P2 và phương án dự phòng](#16-ưu-tiên-p0p1p2-và-phương-án-dự-phòng)
+17. [Hướng dẫn cấu hình và tài liệu tham khảo](#17-hướng-dẫn-cấu-hình-và-tài-liệu-tham-khảo)
 
 ---
 
-## 2. Phạm vi sản phẩm: Giao thức khiếu nại bảo hành riêng tư
+## 1. Tổng quan và quyết định phạm vi
 
-Thay vì bắt người dùng mua license AI agent trước khi khiếu nại, sản phẩm tập trung vào một luồng thương mại rõ ràng giữa hai bên thực tế:
+### 1.1. Vấn đề
 
-- **Người bán (Merchant):** Đăng ký chính sách bảo hành trên nền tảng, nạp tiền ký quỹ bảo chứng vào `SettlementEscrow` trên Fuji C-Chain, và phát hành đơn hàng/hóa đơn kèm `policyCommitment` (cam kết mật mã của điều khoản riêng tư: ngày mua, ngày hết hạn bảo hành, mức bồi thường tối đa) được ghi lên chain **ngay lúc mua hàng**.
-- **Người mua (Buyer):** Khi thiết bị/dịch vụ gặp lỗi, gửi khiếu nại và tải bằng chứng riêng tư lên hệ thống. Giao thức tự động kích hoạt pipeline 3 AI agent để chuẩn bị hồ sơ và dùng ZK proof chứng minh khiếu nại hợp lệ theo `policyCommitment` đã ký lúc mua.
-- **Người bán / Trọng tài (Reviewer / Arbitrator):** Người bán xem xét bằng chứng được cấp quyền và khuyến nghị của AI rồi duyệt/từ chối. Nếu Người bán từ chối hoặc quá hạn phản hồi, hồ sơ chuyển cho Trọng tài (Arbitrator) quyết định cuối cùng.
+Người mua một dịch vụ AI có thể nhận kết quả không đạt kỳ vọng nhưng thiếu cơ chế minh bạch để đối chiếu **điều khoản đã đồng ý khi thanh toán**, xử lý khiếu nại, hoàn tiền và kiểm toán quyết định. Đồng thời, nội dung tài liệu, chính sách thương mại và bằng chứng có thể nhạy cảm, không phù hợp đưa trực tiếp lên blockchain.
 
-*(Phần mở rộng thành AI Agent Marketplace cho phép bên thứ ba đăng và bán license agent theo từng ngành hàng sẽ nằm ở giai đoạn P2 sau hackathon.)*
+### 1.2. Giải pháp
 
-### Pipeline 3 AI Agent trong MVP
+Xây dựng một sản phẩm **thống nhất** gồm hai lớp:
 
-Xây dựng 3 agent hoạt động thực sự chạy tuần tự như một pipeline chuẩn bị hồ sơ:
+- **AI Service Marketplace:** Người bán được duyệt đăng một Service Agent; người mua chọn, thanh toán bằng **AVAX testnet**, chạy AI qua backend và nhận kết quả. Tiền mua dịch vụ được khóa trong escrow theo `orderId` cho đến khi chấp nhận kết quả hoặc xử lý tranh chấp.
+- **Private Dispute Protocol:** Nếu kết quả dịch vụ bị khiếu nại, 3 Dispute Agents hỗ trợ phân tích hồ sơ; **Noir/Barretenberg ZK proof** kiểm tra các điều kiện định lượng đã cam kết; **Merchant/Arbitrator** có quyền duyệt cuối cùng; **Teleporter/ICM** chuyển hồ sơ và quyết định giữa Fuji C-Chain và Dispute L1.
 
-| Agent | Trách nhiệm | Đầu ra |
+**Một luồng sản phẩm:** `Discover → Buy → Execute → Accept hoặc Dispute → Settle`. Không ghép một “chợ AI” và một “ứng dụng bảo hành” độc lập chỉ để trình diễn nhiều công nghệ.
+
+### 1.3. Phạm vi thực tế của hackathon
+
+| Hạng mục | MVP P0 (5 ngày) | Chưa thuộc P0 |
 |---|---|---|
-| Evidence Agent (Agent xử lý bằng chứng) | Trích xuất dữ kiện chính từ hóa đơn/ảnh lỗi và xác định bằng chứng còn thiếu | Bản tóm tắt bằng chứng có cấu trúc + tham chiếu đến bằng chứng |
-| Policy Agent (Agent phân tích chính sách) | Đối chiếu các điều khoản bảo hành/hoàn tiền trong hợp đồng riêng tư của đơn hàng | Các điều khoản áp dụng + dữ liệu đầu vào cho ZK circuit |
-| Resolution Assistant (Trợ lý đề xuất phương án giải quyết) | Kết hợp kết quả phân tích và đề xuất mức bồi thường | Khuyến nghị có thể giải thích để Người bán / Trọng tài xem xét |
+| Service Agents có thể mua | **1 Document Summary Agent**, gọi API thật | 100–1.000 agents |
+| Dispute Agents nội bộ | **3:** Evidence, Policy, Resolution | Thay thế con người bằng AI judge |
+| AI models nền tảng | Có thể **1 model/API** dùng cho nhiều vai trò | 4 model khác nhau là bắt buộc |
+| Marketplace | **Curated:** 1 listing do Seller được duyệt quản lý | Listing tự do/permissionless, NFT license |
+| Thanh toán | AVAX **testnet**, order-specific escrow, release/refund | Mainnet, token riêng, subscription |
+| Avalanche | Fuji C-Chain + Custom Dispute L1; Teleporter hai chiều | Multi-L1 production |
+| Privacy | AES-256-GCM ngoài chain; ZK cho chính sách riêng tư | zkML, quyền riêng tư toàn bộ giao dịch |
+| Phán quyết | AI đề xuất; Merchant/Arbitrator có quyền duyệt | AI tự giải ngân |
 
-### Ranh giới của sản phẩm
+> **Cách giới thiệu chính xác:** “A curated AI Service Marketplace MVP with privacy-preserving cross-chain dispute resolution on Avalanche.” Có marketplace tối thiểu **khi và chỉ khi** listing → mua → chạy agent → quyết toán hoạt động thật. Nếu phần đó chưa hoàn thành, sản phẩm thực tế vẫn chỉ là Dispute Protocol; không gọi đó là marketplace đầy đủ.
 
-Nền tảng là một **quy trình hỗ trợ chuẩn bị và giải quyết tranh chấp bằng AI + ZK**, không phải tòa án tự động hay cơ quan có thẩm quyền pháp lý. AI chỉ tổ chức dữ kiện và đề xuất phương án. Người bán hoặc Trọng tài được ủy quyền phê duyệt thỏa thuận. Smart contract `SettlementEscrow` chỉ giải ngân sau khi có cả ZK proof hợp lệ và phê duyệt bắt buộc.
+### 1.4. Điều kiện thành công
 
----
+- **Luồng A:** Buyer mua Document Summary Agent → agent chạy API thật → Buyer **Accept** → Escrow trả tiền cho Seller đúng một lần.
+- **Luồng B:** Buyer mua dịch vụ khác hoặc tạo order mới → nhận kết quả → **Dispute** → `CaseOpened` qua Teleporter → 3 Dispute Agents + ZK → Reviewer duyệt → `CaseResolutionCommitted` quay về C-Chain → Escrow hoàn tiền cho Buyer.
+- **Luồng C:** Khiếu nại sai thời hạn hoặc yêu cầu refund quá giới hạn → **không thể được xác minh/giải ngân theo đường hợp lệ**.
+- Có ABI, chain ID, blockchain ID, tx hashes, message IDs và proof receipt để giám khảo kiểm chứng. Không ghi tính năng chưa triển khai là đã chạy.
+
+## 2. Sản phẩm, vai trò và chức năng
+
+| Vai trò | Có thể làm gì? | Không được phép |
+|---|---|---|
+| **Seller / Agent Provider** | Quản lý listing đã được duyệt, công bố giá/chính sách; nhận phí sau khi hoàn thành; review dispute của order mình | Tự lấy tiền đã escrow, sửa chính sách một chiều sau checkout |
+| **Buyer** | Xem listing, mua, yêu cầu AI chạy, xem output; chấp nhận hoặc mở tranh chấp trước thời hạn | Mở case cho order người khác, nhận refund hai lần |
+| **Merchant / Reviewer** | Duyệt hoặc từ chối phương án giải quyết theo quyền đã cấp | Bỏ qua proof bắt buộc hoặc sửa số tiền refund đã được chứng minh |
+| **Arbitrator** | Xử lý tranh chấp được chuyển cấp hoặc quá hạn phản hồi, theo quy tắc công bố | Tự tạo order giả, rút escrow vô điều kiện |
+| **Backend operator** | Điều phối model API, lưu mã hóa, theo dõi event và nộp proof | Tự quyết định chuyển AVAX hoặc giả mạo chữ ký người dùng |
+
+**MVP chỉ mở đăng listing cho địa chỉ được duyệt.** Seller và Buyer phải dùng **hai địa chỉ ví khác nhau** khi demo. Một ví có thể được phân quyền reviewer cho môi trường test, nhưng ví/role cần tách bạch về mặt kiểm thử.
+
+### 2.1. Service Agent P0
+
+**Document Summary Agent:** Nhận văn bản/tài liệu mẫu, tạo JSON như `{summary, keyPoints, caveats}`. Kết quả được lưu off-chain; trả cho Buyer đã mua dịch vụ, không công khai nội dung lên chain. Input và output có thể là dữ liệu giả lập để bảo vệ quyền riêng tư khi demo.
+
+### 2.2. Dispute Agents P0
+
+1. **Evidence Agent:** Tóm tắt yêu cầu, bằng chứng, output của Service Agent, tìm dữ kiện thiếu.
+2. **Policy Agent:** Đọc chính sách đã được đối chiếu với bản cam kết của Seller và nêu điều khoản liên quan; hỗ trợ ánh xạ dữ liệu cho prover, **không tự xác lập private witness**.
+3. **Resolution Assistant:** Đề xuất `refundAmount`/phương án xử lý và giải thích cho Reviewer; **không có private key giải ngân**.
+
+**Agent khác model:** 4 vai trò agent có thể dùng cùng một LLM API và những prompt/tool/schema khác nhau. MVP cần **1 Service Agent + 3 Dispute Agents**, không đồng nghĩa cần bốn model AI riêng biệt.
 
 ## 3. Kiến trúc hệ thống
 
 ```mermaid
 flowchart TD
-    M[Merchant] -->|1. Deposit escrow + commit policy| CCHAIN[Fuji C-Chain]
-    U[Buyer] -->|2. Open case + upload evidence| FE[Web DApp]
-    FE --> CCHAIN
-    CCHAIN -->|3. CaseOpened via Teleporter| L1[Custom Dispute L1]
-    L1 -->|8. CaseResolutionCommitted via Teleporter| CCHAIN
-
-    FE --> API[Backend API / Orchestrator]
-    API --> DB[(PostgreSQL + AES-256-GCM)]
-    API --> PIPE[AI Agent Pipeline]
-    PIPE --> EVID[Evidence Agent]
-    EVID --> POLICY[Policy Agent]
-    POLICY --> RES[Resolution Assistant]
-    RES --> PROVER[ZK Prover Service]
-    PROVER -->|5. Proof + public inputs| L1
-    L1 --> VERIFIER[Noir Solidity Verifier]
-    REVIEWER[Merchant / Arbitrator] -->|7. Approve / Reject| L1
-
-    CCHAIN --> REG[MerchantPolicyRegistry / SettlementEscrow]
-    L1 --> DM[Dispute Manager / State Machine]
+    SELLER[Seller / Agent Provider] -->|Register curated listing| REG[AgentRegistry - Fuji C-Chain]
+    BUYER[Buyer] --> UI[Next.js DApp]
+    UI -->|Buy with test AVAX| ORD[ServiceOrderManager - C-Chain]
+    REG --> ORD
+    ORD --> ESC[SettlementEscrow - C-Chain]
+    ORD -->|ServicePurchased event| API[Backend API / Event Orchestrator]
+    API --> EXEC[Service Agent Runtime]
+    EXEC --> MODEL[Gemini / Groq / other approved API]
+    EXEC --> DB[(PostgreSQL + AES-256-GCM)]
+    DB --> API
+    API --> UI
+    UI -->|Accept result| ORD
+    ORD -->|Release to Seller| ESC
+    UI -->|Open dispute on paid order| GW[MarketplaceGateway - C-Chain]
+    GW -->|ICM: CaseOpened| INBOX[DisputeInbox - Custom L1]
+    INBOX --> DM[DisputeManager]
+    DM -->|CaseOpened event| API
+    API --> EA[Evidence Agent]
+    EA --> PA[Policy Agent]
+    PA --> RA[Resolution Assistant]
+    RA --> REVIEW[Merchant / Arbitrator]
+    API --> PROVER[Noir + Barretenberg Prover]
+    PROVER -->|Proof and public inputs| PG[ProofGate - Dispute L1]
+    PG --> DM
+    REVIEW -->|Approve / Reject by authorized wallet| DM
+    DM --> RESULT[DisputeResultSender - L1]
+    RESULT -->|ICM: CaseResolutionCommitted| RECEIVER[DisputeResultReceiver - C-Chain]
+    RECEIVER -->|Authenticated settlement command| ESC
+    ESC -->|Refund to Buyer or release to Seller| BUYER
 ```
 
-### Trách nhiệm của từng lớp
+### 3.1. Trách nhiệm của mỗi lớp
 
-| Lớp | Quản lý | Không được chứa |
+| Lớp | Trạng thái và xử lý | Không đặt vào đây |
 |---|---|---|
-| C-Chain | Đăng ký Merchant, `SettlementEscrow` giữ cọc bảo hành, `policyCommitment` ghi nhận lúc mua hàng, tham chiếu trạng thái hồ sơ | Nội dung hợp đồng, thông tin cá nhân, tệp bằng chứng, nội dung chat, API key |
-| Custom L1 | Trạng thái tranh chấp, hash phiên bản chính sách, kết quả xác minh ZK, phê duyệt của Người bán / Trọng tài, nhật ký kiểm toán | Bằng chứng thô, điều khoản hợp đồng dạng văn bản rõ, prompt bí mật, thông tin nhận dạng cá nhân |
-| Backend | Xác thực, điều phối, kiểm tra quyền truy cập, lưu trữ mã hóa AES trong PostgreSQL, gọi AI, điều phối prover | Private key không được bảo vệ hoặc quyền tự ý giải ngân tiền |
-| AI runtime | Phân loại, trích xuất bằng chứng, đối chiếu điều khoản, đưa ra khuyến nghị | Quyền quyết định cuối cùng hoặc tự giải ngân tiền |
-| ZK prover | Xử lý private witness và tạo proof khớp với `policyCommitment` đã lưu on-chain | Công khai tài liệu gốc hoặc tự tạo/thay đổi `policyCommitment` lúc mở tranh chấp |
+| **Fuji C-Chain** | `AgentRegistry`, giá/listing; service order, người mua/bán; `policyCommitment` tại checkout; AVAX escrow và kết quả settlement | PDF riêng tư, prompt chứa bí mật, API key |
+| **Dispute L1** | Trạng thái case, ZK verification, quyết định reviewer, audit trail tối thiểu | File gốc, full policy plaintext, private witness |
+| **Backend** | API xác thực, order execution, watcher, mã hóa PostgreSQL, pipeline AI, prover orchestration | Quyền rút tiền tùy ý |
+| **Model provider** | Inference Service Agent và Dispute Agents từ dữ liệu cần thiết | Quyền truy cập DB tổng thể, ví ký giao dịch |
+| **ZK prover** | Tạo witness/proof cho chính sách có nguồn tin cậy | Quyền cập nhật `policyCommitment` đã ghi on-chain |
 
-### Tech stack đề xuất
+### 3.2. Tech stack dự kiến
 
-- **Frontend:** Next.js + TypeScript + Tailwind; kết nối ví bằng wagmi/viem hoặc ví Avalanche tương thích (Core Wallet).
-- **Contracts:** Solidity 0.8.x; Foundry hoặc Hardhat.
-- **Avalanche L1:** Avalanche L1 tương thích EVM được tạo trên Fuji qua Avalanche Builder Hub / Console hoặc CLI.
-- **ICM:** Teleporter contracts + Avalanche Interchain SDK; dùng relayer được host sẵn trong giai đoạn thử nghiệm đầu, lưu cấu hình để dựng lại nhanh nếu relayer tạm thời hết hạn.
-- **Backend & Lưu trữ:** Node.js (NestJS/Express) + **PostgreSQL (mã hóa AES-256-GCM tại tầng ứng dụng cho tài liệu và dữ liệu nhạy cảm)** — đủ gọn nhẹ cho MVP 5 ngày, không cần dựng thêm object storage riêng.
-- **AI:** API từ nhà cung cấp (Gemini/OpenAI/Groq) qua adapter phía server. Giữ API key ở phía server.
-- **ZK core:** Noir + Barretenberg cho circuit kiểm tra điều kiện bảo hành và EVM verifier. *(Bỏ qua zkML trong phạm vi MVP.)*
+- **Frontend:** Next.js, TypeScript, Tailwind CSS, Wagmi/Viem, ví tương thích EVM/Avalanche.
+- **Contracts:** Solidity 0.8.x + Foundry hoặc Hardhat; test role, escrow và ICM.
+- **Avalanche:** Fuji C-Chain + Custom EVM Avalanche L1 (Dispute L1), Teleporter/ICM + relayer.
+- **Backend:** Node.js/TypeScript (Express/NestJS tùy team) + PostgreSQL; mã hóa AES-256-GCM phía ứng dụng.
+- **AI:** Server-side adapters đến Gemini/Groq hoặc nhà cung cấp có quyền sử dụng API hợp lệ; timeout, retry, quota handling.
+- **ZK:** Noir + Barretenberg (`nargo` + `bb`) + Solidity verifier trên L1. **zkML không thuộc P0.**
 
----
+## 4. Luồng nghiệp vụ và dòng tiền
 
-## 4. Kiến trúc Avalanche: Vì sao cần custom L1?
+### 4.1. Từ listing đến checkout
 
-Custom Avalanche L1 hợp lý khi sản phẩm cần một miền thực thi riêng, có chính sách validator, tham số chain, cấu hình phí, mô hình truy cập hoặc workload ứng dụng chuyên biệt. Không nên mô tả L1 như một tính năng bảo mật quyền riêng tư tự thân. Validator trên một L1 permissioned vẫn có thể kiểm tra dữ liệu được ghi lên chain đó.
+1. Seller được duyệt đăng `Document Summary Agent` với `agentId`, metadata, mô tả dịch vụ, `priceWei`, `policyVersionHash`.
+2. Buyer chọn agent. Trước khi ký giao dịch, giao diện cho xem **điều khoản dịch vụ/điều kiện tranh chấp**; Seller phải chấp thuận hoặc ký một quote đã gắn với policy. Chính sách được mã hóa lưu off-chain, còn bản commitment được ghi ở checkout.
+3. DApp tạo một `orderId` **xác định được trước giao dịch** (ví dụ từ buyer + nonce duy nhất + chain domain) để tạo `policyCommitment` mà không phải đoán timestamp block tương lai. `purchaseService(...)` xác thực quote/seller, price, agent và orderId.
+4. Buyer trả đúng **AVAX testnet** vào escrow. Contract lưu `purchaseTimestamp = block.timestamp`, `policyCommitment`, `policyVersionHash` và sự kiện `ServicePurchased` trong **cùng transaction mua**. Không được tạo hoặc thay commitment sau khi Buyer đã khiếu nại.
+5. Backend chỉ cho chạy agent sau khi đã xác nhận order thanh toán trên chain, xác thực người yêu cầu và tránh thực thi trùng lặp.
 
-### Vai trò của các chain được đề xuất
+> **Lưu ý thiết kế:** Không đưa `block.timestamp` của transaction sắp xảy ra vào commitment tính **trước** checkout. Timestamp mua thực được contract ghi và truyền vào circuit như **public input tin cậy**; điều khoản bí mật có thể lưu dưới dạng `disputeWindowSeconds` cam kết từ trước. Nếu dùng ngày hết hạn cố định (`warrantyEndTimestamp`), có thể cam kết giá trị này ngay từ checkout và kiểm tra so với timestamp thật.
 
-**Fuji C-Chain** là bề mặt marketplace và thanh toán công khai, dễ kiểm tra. Đây là nơi ban giám khảo có thể xem contract marketplace, giao dịch license/thanh toán và tham chiếu công khai đến hồ sơ.
+### 4.2. Luồng A — Chấp nhận kết quả
 
-**Dispute L1** là chain chuyên dụng cho workflow. Nó quản lý state machine của tranh chấp và xác minh ZK proof trước khi ghi nhận trạng thái proof đã được xác minh. Điều này tạo ra lý do cụ thể để dùng L1 riêng thay vì chỉ tạo một chain để tuyên bố dự án có custom chain.
+```text
+Buyer -> purchaseService(agentId, signedPolicyQuote, ...)
+      -> C-Chain locks priceWei for orderId
+      -> Backend checks paid order
+      -> Service Agent calls API -> stores encrypted result
+      -> Buyer views result -> ACCEPT
+      -> Escrow releases seller amount ONCE
+      -> order = SETTLED
+```
 
-### Những gì nên tùy chỉnh
+- Không yêu cầu Dispute L1 hay ZK cho **order không có tranh chấp**.
+- Có thời hạn chấp nhận/khiếu nại được công bố trước, với quy tắc timeout minh bạch. Nếu sử dụng `autoSettle`, deadline đủ điều kiện gọi phải được kiểm tra **on-chain** và không được giải ngân order đang có case mở.
 
-Giữ custom L1 ban đầu ở mức đơn giản:
+### 4.3. Luồng B — Khiếu nại và hoàn tiền
 
-- Thực thi tương thích EVM để nhóm tiếp tục dùng Solidity và các công cụ quen thuộc.
-- Ghi chép rõ chain ID, RPC endpoint, native gas token/cấu hình phí và genesis allocation.
-- Dùng mô hình validator permissioned cho prototype, kèm vai trò operator được nêu tên và quy trình nâng cấp/quản trị được tài liệu hóa.
-- Chỉ thêm custom precompile hoặc thay đổi hành vi VM khi có yêu cầu cụ thể. Không tự tạo VM riêng chỉ để demo.
+```text
+Buyer -> Dispute (paid, delivered, unsettled order)
+      -> Gateway records claimTimestamp = block.timestamp
+      -> ICM CaseOpened (Fuji C-Chain -> Dispute L1)
+      -> 3 Dispute Agents (off-chain, recommendations only)
+      -> Noir policy eligibility proof
+      -> ProofGate validates proof/public inputs
+      -> Merchant / Arbitrator approves exact verified refundAmount
+      -> ICM CaseResolutionCommitted (Dispute L1 -> C-Chain)
+      -> Receiver checks source, case, order, amount, nonce
+      -> Escrow refunds Buyer / releases any remaining funds as policy states
+      -> order = SETTLED; no second payout
+```
 
-Tài liệu Avalanche mô tả quy trình tạo chain/subnet và chuyển nó thành Avalanche L1. Quy trình L1 hiện nay chính xác hơn cách gọi chung chung “chỉ là một Subnet”; trong tài liệu cũ, thuật ngữ Subnet vẫn được dùng ở một số bước tạo chain. Hãy dùng **Avalanche L1** làm thuật ngữ chính của sản phẩm và chỉ nhắc đến Subnet khi giải thích cách thiết lập bên dưới.
+- Buyer không thể **Accept rồi Dispute** cùng order.
+- Người dùng không thể mở case cho order không sở hữu hoặc order đã hoàn tất.
+- Nếu reviewer từ chối hoặc quá thời gian phản hồi, chuyển quyền xem xét cho Arbitrator theo state machine được chốt từ đầu. **Không dùng admin rescue để tự ý rút escrow.**
+- Hệ thống không tự xác nhận “AI output kém chất lượng” bằng ZK: đó là phần **review dựa trên bằng chứng**, tách riêng khỏi phép kiểm tra điều kiện định lượng.
 
-### Tính thực tế của validator
+### 4.4. Phân biệt hai loại escrow
 
-Tài liệu hỗ trợ Avalanche gợi ý năm validator là mức tối thiểu thực tế để tăng khả năng chống chịu, đồng thời lưu ý chain về mặt kỹ thuật có thể chạy với ít validator hơn. Trong hackathon, node testnet được quản lý sẵn có thể giúp giảm thời gian thiết lập, nhưng các node đó có thể chỉ tồn tại tạm thời. Nếu nhóm chỉ chạy một hoặc hai validator, hãy gọi đó là mạng phát triển/demo; không nên quảng bá nó như một hệ thống phi tập trung hoặc có khả năng chịu lỗi ở cấp production.
-
-### Checklist thiết lập L1
-
-1. Quyết định prototype sẽ permissioned hay permissionless. Với trường hợp sử dụng này, nên bắt đầu bằng permissioned.
-2. Chọn EVM chain ID duy nhất và xác định genesis/cấu hình phí.
-3. Tạo L1 trên Fuji bằng workflow Builder Hub hiện tại.
-4. Khởi chạy và đăng ký các validator node; lưu NodeID và cấu hình quản lý validator.
-5. Xác nhận RPC của L1, chain ID, việc tạo block, kết nối ví và khả năng xem trên explorer.
-6. Deploy contract `DisputeManager` và ZK verifier.
-7. Lưu riêng blockchain ID của L1 và EVM chain ID. Teleporter routing cần Avalanche blockchain ID; cấu hình ví thường cần EVM chain ID.
-
-**Không bắt đầu bằng L1 production trên mainnet.** Hãy xây dựng và kiểm thử trên Fuji trước.
-
----
-
-## 5. Teleporter / ICM: trường hợp sử dụng xuyên chain thực tế
-
-ICM không phải một cây cầu được thêm vào cho đẹp. Nó cần truyền một số thông điệp ứng dụng nhỏ để việc tách hệ thống thành hai chain thực sự có ích.
-
-### Luồng thông điệp A — mở một tranh chấp
-
-1. *(Trước đó, lúc mua hàng)*: Người bán (Merchant) đã ghi nhận `policyCommitment` (cam kết điều khoản bảo hành riêng tư) lên C-Chain kèm chữ ký xác nhận và nạp tiền cọc vào `SettlementEscrow`.
-2. Khi xảy ra sự cố, Người mua mở tranh chấp từ DApp cho `orderId` tương ứng.
-3. `MarketplaceGateway` trên C-Chain kiểm tra đơn hàng tồn tại, lấy `policyCommitment` đã lưu từ lúc mua và `claimTimestamp = block.timestamp`.
-4. Contract gửi một Teleporter message đến custom L1, chỉ chứa:
-   - `caseId` (mã định danh ngẫu nhiên, không mang ý nghĩa trực tiếp),
-   - `policyCommitment` (commitment có ngẫu nhiên hóa đã cam kết lúc mua hàng),
-   - `claimTimestamp` (`block.timestamp` tại thời điểm mở hồ sơ),
-   - `policyVersionHash`,
-   - tham chiếu chain nguồn và nonce.
-5. `DisputeInbox` trên L1 xác thực chain nguồn và contract gửi đã được phê duyệt, ngăn thông điệp trùng lặp/bị phát lại, rồi tạo trạng thái hồ sơ nội bộ.
-6. Backend nhận event và khởi chạy pipeline AI off-chain.
-
-### Luồng thông điệp B — công bố kết quả đã được Người bán / Trọng tài xem xét
-
-1. AI pipeline (Evidence → Policy → Resolution) tạo khuyến nghị có thể giải thích ở ngoài chain.
-2. ZK prover tạo proof cho điều kiện chính sách, chứng minh các giá trị bí mật khớp với `policyCommitment` đã lưu on-chain từ lúc mua hàng và hợp lệ so với `claimTimestamp`.
-3. L1 verifier kiểm tra proof; `DisputeManager` chỉ ghi nhận `ProofVerified` nếu xác minh thành công.
-4. Người bán (Merchant) xem xét bằng chứng và phê duyệt/từ chối phương án bồi thường; nếu Người bán từ chối hoặc quá hạn phản hồi, Trọng tài (Arbitrator) xem xét và ra quyết định cuối cùng. L1 ghi nhận danh tính/vai trò reviewer cùng quyết định.
-5. L1 gửi Teleporter message đến C-Chain, chứa:
-   - `caseId`,
-   - `outcomeCode` (mã kết quả tổng quát, không nhạy cảm),
-   - `proofHash` hoặc tham chiếu proof receipt,
-   - `policyVersionHash`,
-   - tham chiếu phê duyệt và nonce của thông điệp.
-6. `DisputeResultReceiver` trên C-Chain xác thực chain nguồn và contract gửi, ghi nhận kết quả và mở khóa `SettlementEscrow` để giải ngân tiền bồi thường cho Người mua nếu được phê duyệt.
-
-### Trách nhiệm của các contract xuyên chain
-
-- `MarketplaceGateway` (C-Chain): tạo tham chiếu công khai cho hồ sơ và gửi `CaseOpened`.
-- `DisputeInbox` (L1): triển khai Teleporter receiver interface và xác thực thông điệp đến từ nguồn được phê duyệt.
-- `DisputeManager` (L1): quản lý state transition và quy tắc phê duyệt.
-- `DisputeResultReceiver` (C-Chain): chỉ chấp nhận các thông điệp kết quả hợp lệ từ sender L1 đã được cấu hình.
-
-### Các bước thiết lập hạ tầng Teleporter
-
-1. Xác nhận Teleporter messenger có sẵn trên Fuji C-Chain.
-2. Deploy `TeleporterMessenger` và `TeleporterRegistry` trên custom L1 theo hướng dẫn deploy chính thức hiện tại.
-3. Cấu hình relayer cho Fuji C-Chain ↔ custom L1. Relayer được host sẵn phù hợp cho một bài kiểm thử ngắn; nó có thể hết hạn sau một khoảng thời gian giới hạn. Tự host relayer là lựa chọn lâu dài hơn.
-4. Nạp gas cho relayer và các tài khoản chain cần thiết khi áp dụng.
-5. Deploy contract gửi và nhận trên cả hai chain.
-6. Gửi một ping message tối giản trước khi tích hợp workflow tranh chấp đầy đủ.
-7. Kiểm thử cả hai chiều và lưu transaction hash ở chain nguồn, transaction hash ở chain đích, message ID và trạng thái giao nhận cuối cùng.
-
-**Điểm cực kỳ quan trọng:** thông điệp có thể được phát trên chain nguồn nhưng vẫn chưa được giao nếu relayer không hoạt động. Relayer vận chuyển thông điệp; chain đích xác minh thông điệp đã được xác thực. Không được xem bản thân relayer là gốc rễ của niềm tin.
-
-### Checklist bảo mật xuyên chain
-
-- Allowlist chính xác source blockchain ID và địa chỉ contract nguồn.
-- Xác thực caller Teleporter messenger trong receiver.
-- Có nonce/message ID duy nhất và từ chối xử lý thông điệp trùng lặp.
-- Handler phía receiver phải có tính idempotent (xử lý lặp lại không làm thay đổi kết quả ngoài dự kiến).
-- Kiểm tra hồ sơ đang ở đúng trạng thái trước khi áp dụng thông điệp.
-- Quy định timeout và phương án khôi phục thủ công khi thông điệp bị chậm hoặc mắc kẹt.
-- Không gửi điều khoản hợp đồng riêng tư, bằng chứng thô, danh tính người dùng hoặc thông tin xác thực API qua Teleporter.
-- Không xem việc giao nhận thông điệp là bằng chứng cho thấy quyết định nghiệp vụ tự thân là đúng.
-
----
-
-## 6. Mô hình quyền riêng tư: mã hóa trước, ZK sau
-
-Zero-knowledge proof giúp chứng minh các mệnh đề về đầu vào riêng tư. Chúng không thay thế mã hóa, kiểm soát truy cập, quản lý khóa an toàn hoặc thu thập bằng chứng đáng tin cậy.
-
-### Phân loại dữ liệu
-
-| Dữ liệu | Nơi lưu trữ | Cách xử lý trên chain công khai |
+| Loại | Nguồn tiền | Quy trình |
 |---|---|---|
-| PDF hợp đồng / hóa đơn / ảnh | PostgreSQL (mã hóa AES-256-GCM tại tầng ứng dụng) | Không lưu nội dung tệp; tối đa chỉ lưu hash toàn vẹn ngoài luồng công khai |
-| Danh tính và thông tin liên hệ người dùng | Backend database được bảo vệ | Tuyệt đối không công khai |
-| Giá trị hợp đồng, ngày mua, ngày hết hạn, tiền bồi thường tối đa | Off-chain có mã hóa | Không công khai dạng văn bản rõ; chỉ công bố `policyCommitment` từ lúc mua |
-| AI prompt và lịch sử hội thoại | Backend database được bảo vệ | Tuyệt đối không công khai |
-| Merchant ID, cấu hình Escrow, `policyCommitment` | C-Chain | Công khai metadata đơn hàng và cam kết |
-| Trạng thái hồ sơ, `claimTimestamp`, mã kết quả không nhạy cảm | Custom L1 và/hoặc C-Chain | Chỉ công bố thông tin cần thiết |
-| ZK proof và public input | L1 verifier / nơi lưu proof | Chỉ công bố proof nếu public input không làm lộ dữ liệu nhạy cảm |
+| **P0 — Service payment escrow** | Buyer trả tiền mua Service Agent | Khóa theo `orderId`, trả Seller nếu Accept/hết thời hạn hợp lệ, hoặc refund Buyer khi dispute được duyệt |
+| **P1 — Warranty collateral (tương thích ý tưởng gốc)** | Merchant đặt cọc bảo hành cho hàng hóa/dịch vụ ngoài marketplace | Tài khoản ký quỹ riêng; chỉ giải ngân bồi thường theo hồ sơ đã được xác minh và phê duyệt |
 
-### Thiết kế commitment
+**Không gộp hai nguồn tiền thành một số dư không phân biệt.** P0 tập trung vào phí dịch vụ AI; các kịch bản bảo hành hàng hóa ban đầu vẫn có thể mở rộng nhờ cùng Dispute Protocol nhưng không cần hoàn thành trong 5 ngày.
 
-Một hash thuần của giá trị dễ đoán có thể làm lộ thông tin thông qua việc thử đoán. Với các trường hợp đồng riêng tư, hãy dùng **commitment có ngẫu nhiên hóa** (ví dụ commitment dựa trên Poseidon cùng một nonce bí mật) và giữ nonce ở trạng thái riêng tư. Cách tạo commitment phải nhất quán giữa lúc phát hành đơn hàng, circuit và verifier.
+## 5. Avalanche L1, Teleporter và ICM
 
-**Nguyên tắc bắt buộc để ZK có giá trị chứng minh:** `policyCommitment` **phải được tạo và ghi lên C-Chain ngay tại thời điểm mua hàng** (với chữ ký xác nhận của Người bán), không phải do backend tự tạo lúc mở tranh chấp. Nếu backend tự tạo commitment lúc mở tranh chấp, bên tạo proof có thể tự chọn số liệu khớp với điều kiện hợp lệ và proof sẽ mất ý nghĩa.
+### 5.1. Vì sao tách hai chain?
 
-### Vòng đời dữ liệu thực tế
+- **Fuji C-Chain:** nơi người dùng mua dịch vụ, quản lý order, thanh toán và escrow; dễ kiểm chứng giao dịch.
+- **Custom Dispute L1:** miền thực thi riêng cho các bước mở hồ sơ, kiểm chứng ZK, phân quyền reviewer và nhật ký quyết định.
+- **Teleporter/ICM:** truyền thông điệp xác thực giữa hai miền để giải ngân ở chain giữ tiền mà không trao toàn quyền cho backend.
 
-1. **Lúc mua hàng:** Người bán tạo `policyCommitment` từ các điều khoản riêng tư + nonce bí mật, ký xác nhận và ghi lên C-Chain cùng tiền ký quỹ vào `SettlementEscrow`. Dữ liệu rõ được mã hóa AES-256-GCM lưu ở PostgreSQL (hoặc bàn giao bản mã hóa cho Người mua/Người bán).
-2. **Lúc mở khiếu nại:** Người mua tải hóa đơn/bằng chứng lỗi lên qua HTTPS; backend kiểm tra file và mã hóa AES-256-GCM trước khi lưu.
-3. C-Chain ghi nhận `claimTimestamp = block.timestamp` và chuyển `policyCommitment` + `claimTimestamp` sang Dispute L1 qua Teleporter.
-4. AI agent chỉ xử lý dữ liệu cần thiết cho vai trò của mình. Tránh gửi dữ liệu cá nhân không cần thiết đến nhà cung cấp model bên ngoài.
-5. Prover nhận private witness từ backend/prover service được kiểm soát.
-6. Chỉ proof, `policyCommitment`, `claimTimestamp`, `policyVersionHash` và kết quả công khai mới được gửi đến L1 verifier.
-7. Người bán (và Trọng tài nếu có kháng nghị) xem bằng chứng riêng tư mà họ được cấp quyền truy cập trong giao diện review và phê duyệt/từ chối khuyến nghị.
-8. L1 công bố trạng thái tối thiểu; C-Chain nhận tham chiếu kết quả và giải ngân `SettlementEscrow` theo phê duyệt.
+Đây là **lựa chọn kiến trúc để trình diễn chuyên biệt hóa workflow**, không phải khẳng định mọi marketplace đều cần L1 riêng. L1 permissioned hay chỉ có ít validator **không tự bảo đảm privacy hay mức phi tập trung production**.
 
----
+### 5.2. Hai thông điệp bắt buộc
 
-## 7. Thiết kế ZK proof: tính năng bảo vệ quyền riêng tư bắt buộc
+**Fuji C-Chain → Dispute L1: `CaseOpened`**
 
-### Circuit đầu tiên được khuyến nghị: kiểm tra điều kiện bảo hành/hoàn tiền riêng tư
+```text
+caseId, orderId, policyCommitment, policyVersionHash,
+purchaseTimestamp, claimTimestamp, sourceBlockchainID, messageNonce
+```
 
-Đừng bắt đầu bằng việc chứng minh toàn bộ câu trả lời AI. Hãy bắt đầu bằng một quy tắc nhỏ, có tính xác định, dễ hiểu và dễ kiểm thử.
+- `claimTimestamp = block.timestamp` **tại transaction mở case trên Fuji**, không lấy từ form hoặc clock phía backend.
+- `purchaseTimestamp` do order contract trên C-Chain ghi tại checkout.
+- `DisputeInbox` xác thực **TeleporterMessenger caller**, `sourceBlockchainID`, contract nguồn, mã giao dịch/case và idempotency.
 
-**Ví dụ private input (witness):**
+**Dispute L1 → Fuji C-Chain: `CaseResolutionCommitted`**
 
-- Ngày mua hàng,
-- Ngày kết thúc bảo hành,
-- Mức bồi thường tối đa theo hợp đồng (riêng tư),
-- Số tiền bồi thường được đề xuất,
-- Nonce ngẫu nhiên của `policyCommitment`,
-- Các trường chính sách riêng tư khác cần được ràng buộc vào commitment.
+```text
+caseId, orderId, outcomeCode, refundAmountWei,
+proofReference, reviewerApprovalReference, messageNonce
+```
 
-**Ví dụ public input:**
+- `refundAmountWei` là **public** và phải khớp số tiền trong proof đã verify và quyết định reviewer.
+- `DisputeResultReceiver` chỉ gọi escrow sau khi kiểm tra nguồn hợp lệ, trạng thái order/case và số tiền còn khóa; xử lý message lặp không thể giải ngân lần thứ hai.
+- `Teleporter` dùng **Avalanche blockchain ID** cho routing, khác **EVM chain ID** dùng ở ví.
 
-- `caseId` hoặc hash của nó,
-- `policyVersionHash`,
-- `policyCommitment` (đã được ghi on-chain lúc mua hàng, không tự sinh lúc khiếu nại),
-- `claimTimestamp` (lấy từ `block.timestamp` on-chain lúc mở hồ sơ, tuyệt đối không để là private input),
-- `eligible = true/false` hoặc một mã kết quả tổng quát,
-- Nullifier dùng một lần để ngăn việc tái sử dụng proof.
+### 5.3. Hạ tầng
 
-**Circuit chứng minh:**
+1. Tạo Custom EVM Avalanche L1 trên Fuji; lưu RPC, EVM chain ID, Avalanche blockchain ID, gas token/genesis.
+2. Kiểm tra TeleporterMessenger/Registry của Fuji; triển khai hoặc cấu hình thành phần ICM cần thiết trên Dispute L1 theo tài liệu hiện hành.
+3. Cài relayer quan sát **hai chiều**; gửi ping test trước khi dùng nghiệp vụ thật.
+4. Ghi tx hash nguồn/đích, message ID, thời gian nhận; UI phân biệt `SENT`, `PENDING_RELAY`, `RECEIVED`, `FAILED`.
+5. Relayer là bộ phận **chuyển phát**, không phải bên được phép quyết định hoàn tiền.
 
-1. Các trường chính sách riêng tư tương ứng với `policyCommitment` đã được Người bán cam kết on-chain từ lúc mua hàng.
-2. `claimTimestamp` (public) nằm trong khoảng `[purchaseTimestamp, warrantyEndTimestamp]`.
-3. Số tiền đề xuất nằm trong mức bồi thường tối đa theo hợp đồng riêng tư.
-4. Proof được ràng buộc với hồ sơ (`caseId`) và phiên bản chính sách cụ thể, không thể tái sử dụng cho một hồ sơ khác.
+**Rủi ro thời hạn:** Theo hướng dẫn hiện tại của Avalanche Builder Hub, **hosted relayer có thể tự dừng sau 3 ngày**. Với hackathon 5 ngày, phải chủ động kiểm tra/khởi tạo lại hoặc chuẩn bị self-hosted relayer trước Ngày 4–5, và có video chạy thật dự phòng.
 
-**Proof không chứng minh được:**
+## 6. Smart contracts và state machine
 
-- Không chứng minh hóa đơn hoặc hợp đồng đã tải lên là hàng thật/tài liệu xác thực.
-- Không chứng minh khuyến nghị AI công bằng hoặc đúng pháp luật.
-- Không chứng minh reviewer là con người đã kiểm tra bằng chứng gốc.
-- Không che giấu thông tin vô tình bị đưa vào public input.
+### 6.1. Fuji C-Chain — P0
 
-Để xác thực tài liệu, hãy dùng chữ ký của bên phát hành, timestamp đáng tin cậy, xác minh nguồn và kiểm tra của reviewer khi cần. ZK proof chỉ chứng minh phép tính được mã hóa trong circuit đã thỏa mãn với witness được cung cấp.
+| Contract | Trách nhiệm |
+|---|---|
+| `AgentRegistry.sol` | Listing curated: `agentId`, seller, price, metadata, policy version, trạng thái active; chỉ seller/admin được duyệt đăng |
+| `ServiceOrderManager.sol` | `purchaseService` payable; ghi Buyer/Seller/order/policy, phát `ServicePurchased`; xác nhận Accept; điều phối settlement path |
+| `SettlementEscrow.sol` | Khóa **theo orderId**, release Seller / refund Buyer duy nhất một lần; accounting và reentrancy protection |
+| `MarketplaceGateway.sol` | `openCase(orderId)` sau khi xác minh Buyer, trạng thái order; lấy commitment/timestamp đã ghi và gửi ICM |
+| `DisputeResultReceiver.sol` | Nhận và xác thực `CaseResolutionCommitted`, kiểm tra order/case, gọi escrow quyết toán đúng số |
 
-### Lộ trình triển khai đề xuất: Noir + Barretenberg
+**`MerchantPolicyRegistry.sol`** từ README gốc: có thể giữ code/adapter hỗ trợ chính sách cho warranty orders, nhưng **không phải điều kiện P0** nếu `ServiceOrderManager` đã gắn commitment/version từ checkout. Nếu giữ contract này, phải bảo đảm **một nguồn sự thật duy nhất** cho `policyCommitment` của mỗi order; không tạo 2 giá trị có thể mâu thuẫn.
 
-1. Viết một Noir circuit nhỏ cho điều kiện bảo hành/mức bồi thường.
-2. Compile circuit và tạo test witness.
-3. Tạo proof cục bộ và xác minh cục bộ trước.
-4. Tạo EVM/Solidity verifier bằng phiên bản và cấu hình Barretenberg tương ứng.
-5. Deploy verifier lên custom L1.
-6. Thêm contract `ProofGate` gọi verifier với public input và chỉ đánh dấu hồ sơ đã được xác minh proof một lần.
-7. Ràng buộc public input với `caseId`, `policyVersionHash`, chain/domain và nullifier dùng một lần.
-8. Thêm test case cho proof hợp lệ và không hợp lệ.
-9. Đo thời gian tạo proof, gas xác minh và kích thước contract khi deploy.
+### 6.2. Custom Dispute L1 — P0
 
-**Cổng kiểm tra tương thích & kích thước contract:** EVM verifier do Barretenberg sinh ra yêu cầu các precompile liên quan đến elliptic curve và modular exponentiation, đồng thời **thường có kích thước lớn (dễ chạm giới hạn 24KB của EVM)**. Cần deploy thử một verifier hello-world lên **chính custom L1** ngay trong Ngày 1; không để bài kiểm tra precompile và bytecode size đến ngày cuối.
+| Contract | Trách nhiệm |
+|---|---|
+| `DisputeInbox.sol` | Nhận `CaseOpened` từ C-Chain qua Teleporter; validate nguồn, replay, case uniqueness |
+| `DisputeManager.sol` | State machine, role reviewer/arbitrator, deadline và outcome; không tin dữ liệu do AI tự khai |
+| `ProofGate.sol` | Gọi Noir/Barretenberg Solidity verifier; so public input với case stored, enforce nullifier unique |
+| `DisputeResultSender.sol` | Gửi kết quả đã được phê duyệt về C-Chain với exact `refundAmountWei` |
+| `PolicyEligibilityVerifier.sol` | Solidity verifier được tạo/tương thích từ toolchain ZK đã chốt |
 
-### Tính năng ZK cần trình diễn trong demo
+### 6.3. State machine tối thiểu
 
-Dùng một contract demo với các điều khoản giả lập. Trình bày một hồ sơ có giá trị riêng tư thỏa mãn chính sách, tạo proof hợp lệ và để L1 chấp nhận proof. Sau đó thay đổi một giá trị riêng tư khiến chính sách bị vi phạm và cho thấy quá trình tạo/xác minh proof thất bại. Ban giám khảo cần thấy hệ thống xác minh một mệnh đề mà không tiết lộ các giá trị riêng tư.
+**Service order:**
 
----
+```text
+NONE -> PAID -> RUNNING -> DELIVERED
+                             |-> ACCEPTED -> SETTLED (Seller paid)
+                             |-> DISPUTED -> SETTLED (refund/release per resolution)
+```
 
-## 8. zkML: bỏ khỏi MVP (chỉ là hướng mở rộng sau hackathon)
-
-Với team 3 người trong 5 ngày, **bỏ hẳn zkML khỏi phạm vi MVP**. Tập trung 100% vào Noir policy circuit để chứng minh điều kiện bảo hành/hoàn tiền khớp với `policyCommitment` đã lưu on-chain. Sau hackathon, nếu cần mở rộng, có thể dùng EZKL cho một bộ phân loại ONNX nhỏ ở giai đoạn P2.
-
----
-
-## 9. Kế hoạch các module smart contract
-
-### Contract trên C-Chain
-
-**`MerchantPolicyRegistry`** *(thay cho `AgentRegistry` + bỏ `AgentLicense` NFT ở P0)*
-- Đăng ký Merchant, phiên bản chính sách bảo hành (`policyVersionHash`) và ghi nhận `policyCommitment` cho từng đơn hàng lúc mua hàng (có chữ ký/xác nhận của Merchant).
-- Phát các event `MerchantRegistered`, `OrderCommitted(orderId, policyCommitment, purchaseTimestamp)`.
-
-**`SettlementEscrow`** *(Bắt buộc P0 — không còn là tùy chọn)*
-- Giữ tiền cọc bảo hành của Người bán (hoặc tiền ký quỹ đơn hàng) theo các điều kiện rõ ràng.
-- Chỉ giải ngân bồi thường cho Người mua khi nhận được kết quả hợp lệ từ `DisputeResultReceiver` (đã qua xác minh ZK + phê duyệt của Người bán hoặc Trọng tài).
-- Có đường xử lý timeout khi Người bán không phản hồi.
-
-**`MarketplaceGateway`**
-- Nhận yêu cầu mở tranh chấp từ Người mua, lấy `policyCommitment` đã lưu từ `MerchantPolicyRegistry` và `claimTimestamp = block.timestamp`.
-- Gửi `CaseOpened` qua Teleporter đến Dispute L1.
-
-**`DisputeResultReceiver`**
-- Nhận result message từ Dispute L1 đã được cấu hình.
-- Xác thực chain nguồn/sender, cập nhật trạng thái đơn hàng và kích hoạt giải ngân trên `SettlementEscrow`.
-
-*(Ghi chú: `AgentRegistry` và `AgentLicense` NFT cho phép bên thứ ba bán agent được chuyển xuống P2 để không làm loãng phạm vi MVP.)*
-
-### Contract trên custom L1
-
-**`DisputeInbox`**
-- Nhận `CaseOpened` message thông qua Teleporter.
-- Xác thực nguồn và loại bỏ thông điệp trùng lặp.
-
-**`DisputeManager`**
-- Duy trì state machine nhỏ:
+**Dispute case:**
 
 ```text
 NONE -> OPENED -> ANALYZING -> PROOF_VERIFIED -> MERCHANT_REVIEW
-                                      |                 |
-                                      |                 +-> APPROVED -> SETTLED
-                                      |                 +-> REJECTED -> ARBITRATOR_REVIEW -> SETTLED / DENIED
-                                      +-> PROOF_FAILED
+              |                   |                      |
+              |                   +-> PROOF_FAILED        +-> APPROVED -> RESOLVED
+              |                                          +-> REJECTED -> ARBITRATOR_REVIEW
+              |                                                              |-> RESOLVED
+              |                                                              +-> DENIED
+              +-> CANCELED (only by authorized, explicit rule)
 ```
 
-- Ghi nhận `policyVersionHash`, `policyCommitment`, `claimTimestamp`, phê duyệt của Người bán / Trọng tài và timestamp.
-- Thực thi chuyển trạng thái dựa trên role; không cho phép nhảy trạng thái tùy ý.
+- State chuyển bằng **contract role + precondition**, không phải UI sửa local state.
+- `APPROVED/RESOLVED` chỉ tạo ra **một settlement instruction**; `SETTLED` tại Fuji là kết quả cuối cùng sau khi nhận message, không được coi là xảy ra ngay khi L1 đã approve.
+- Quy tắc trường hợp bị Reject/Denied cần xác định rõ phần tiền chuyển cho bên nào và khi nào; không tự đoán hay để escrow khóa vô thời hạn.
+- Kịch bản timeout **không vượt qua điều kiện đã cam kết**. Nếu chưa kịp hoàn thiện arbitration thật, đánh dấu giới hạn MVP trong demo thay vì tạo “emergency withdrawal” không có điều kiện.
 
-**`ProofGate`**
-- Gọi ZK verifier được sinh ra.
-- Ràng buộc việc xác minh proof với đúng `caseId`, `policyCommitment` từ lúc mua, `claimTimestamp`, `policyVersionHash` và nullifier dùng một lần.
-- Từ chối proof trùng lặp hoặc bị phát lại.
+### 6.4. Dữ liệu contract và sự kiện
 
-**`DisputeResultSender`**
-- Gửi kết quả không nhạy cảm đã được phê duyệt về C-Chain qua Teleporter.
+```text
+AgentListing {
+  agentId, seller, priceWei, metadataURI, policyVersionHash, active
+}
+ServiceOrder {
+  orderId, agentId, buyer, seller, priceWei,
+  policyCommitment, policyVersionHash, purchaseTimestamp,
+  status, settlementDeadline
+}
+DisputeCase {
+  caseId, orderId, policyCommitment, policyVersionHash,
+  purchaseTimestamp, claimTimestamp, status
+}
 
-### Checklist kiểm thử contract
-
-- Người bán chưa nạp cọc vào `SettlementEscrow` không thể phát hành đơn hàng có bảo hành.
-- `policyCommitment` chỉ có thể được ghi lúc tạo đơn hàng, không thể sửa đổi khi đã mở tranh chấp.
-- Chỉ Teleporter messenger đã cấu hình mới có thể gọi các entry point của receiver.
-- Thông điệp từ chain nguồn/sender chưa được phê duyệt bị từ chối.
-- Thông điệp trùng lặp bị bỏ qua hoặc revert một cách an toàn.
-- Proof thuộc hồ sơ khác, sai `policyCommitment` hoặc sai `claimTimestamp` bị từ chối.
-- Không thể tái sử dụng proof.
-- Vai trò Người bán / Trọng tài không thể bị backend AI âm thầm thay thế.
-- Không thể giải ngân `SettlementEscrow` trước khi đáp ứng đủ ZK proof + phê duyệt.
-
----
-
-## 10. Workflow đầu-cuối
-
-### Hành trình người dùng
-
-1. **Lúc mua hàng:** Người bán đăng ký chính sách, nạp tiền cọc bảo hành vào `SettlementEscrow` và ghi `policyCommitment` (cam kết điều khoản riêng tư + nonce bí mật) lên Fuji C-Chain.
-2. **Mở khiếu nại:** Khi thiết bị gặp lỗi, Người mua mở tranh chấp cho đơn hàng trên DApp và tải bằng chứng (hóa đơn/ảnh lỗi) lên backend (mã hóa AES-256-GCM trong PostgreSQL).
-3. C-Chain lấy `policyCommitment` đã lưu từ bước 1, gắn `claimTimestamp = block.timestamp` và gửi `CaseOpened` qua Teleporter sang Dispute L1.
-4. Dispute L1 tạo trạng thái tranh chấp (`OPENED`).
-5. Backend chạy pipeline 3 AI agent: Evidence → Policy → Resolution để trích xuất dữ kiện và đề xuất mức bồi thường.
-6. ZK prover tạo proof chứng minh điều kiện bảo hành và mức bồi thường đề xuất hợp lệ so với `policyCommitment` và `claimTimestamp`.
-7. Dispute L1 xác minh proof on-chain qua `ProofGate` và chuyển trạng thái `PROOF_VERIFIED` → `MERCHANT_REVIEW`.
-8. Người bán kiểm tra bằng chứng được cấp quyền và khuyến nghị của AI:
-   - Nếu Người bán **Approve** → ghi nhận phê duyệt.
-   - Nếu Người bán **Reject** hoặc quá hạn → chuyển Trọng tài (Arbitrator) xem xét và quyết định cuối cùng.
-9. L1 gửi result message tối thiểu (`CaseResolutionCommitted`) về C-Chain qua Teleporter.
-10. C-Chain xác thực thông điệp, cập nhật trạng thái và `SettlementEscrow` giải ngân tiền bồi thường cho Người mua.
-11. Người mua và Người bán kiểm tra link giao dịch trên cả hai explorer.
-
-### Sequence diagram
-
-```mermaid
-sequenceDiagram
-    participant Merchant
-    participant Buyer
-    participant DApp
-    participant C as C-Chain (Escrow)
-    participant L1 as Dispute L1
-    participant API as Backend / 3 AI Agents
-    participant ZK as Prover
-    participant Arbitrator
-
-    Merchant->>C: Deposit escrow + commit policyCommitment
-    Buyer->>DApp: Open claim + upload encrypted evidence
-    DApp->>C: openCase(orderId)
-    C-->>L1: Teleporter CaseOpened (policyCommitment, claimTimestamp)
-    L1->>L1: Validate origin + create case
-    L1-->>API: CaseOpened event
-    API->>API: Run Evidence / Policy / Resolution agents
-    API->>ZK: Private witness + public inputs
-    ZK-->>L1: Proof + public inputs
-    L1->>L1: Verify proof + bind to case
-    L1-->>Merchant: Review request
-    alt Merchant approves
-        Merchant->>L1: Approve claim
-    else Merchant rejects / timeout
-        L1-->>Arbitrator: Escalate dispute
-        Arbitrator->>L1: Final decision
-    end
-    L1-->>C: Teleporter CaseResolutionCommitted
-    C->>C: Release SettlementEscrow payout
-    C-->>DApp: Transaction/event status
-    DApp-->>Buyer: Outcome + explorer links
+Events: AgentRegistered, ServicePurchased, ServiceDelivered,
+        ServiceAccepted, CaseOpened, ProofVerified,
+        CaseResolutionCommitted, OrderSettled
 ```
 
----
+`ServiceDelivered` có thể là event từ một cơ chế attestation được thiết kế rõ hoặc chỉ một trạng thái backend có hash output; **không khẳng định việc model chạy là được blockchain chứng minh**. Nếu delivery status ảnh hưởng tiền, phải xác định nguồn xác thực và cơ chế khiếu nại phù hợp.
 
-## 11. Workflow xây dựng: kế hoạch 5 ngày cho team 3 người
+## 7. Service Agent và 3 Dispute Agents
 
-Đây là lịch thực tế cho nhóm **3 người** trong **5 ngày** (đã cắt bỏ các phần thừa như `AgentLicense` NFT, object storage riêng và zkML). **Không được trì hoãn việc kiểm tra tính khả thi của L1, Teleporter hai chiều và kích thước verifier sang ngày sau.**
+### 7.1. Pipeline Service Agent
 
-### Ngày 1 — Chốt kiến trúc & Thử nghiệm kỹ thuật ưu tiên rủi ro (Go / No-Go)
+```text
+POST /api/orders/:id/execute
+ -> Verify caller owns paid order and order is unsettled
+ -> Load input via authenticated API
+ -> Call Gemini/Groq from SERVER (API key never in browser)
+ -> Validate JSON schema; timeout/retry/rate-limit
+ -> Store encrypted output + audit metadata in PostgreSQL
+ -> Return output to authorized Buyer
+```
 
-**Công việc**
-- Chốt 1 câu chuyện duy nhất (Merchant cam kết `policyCommitment` + nạp `SettlementEscrow` lúc mua → Buyer mở khiếu nại → AI pipeline → ZK proof → Merchant/Arbitrator duyệt → Giải ngân Escrow).
-- Tạo custom L1 trên Fuji (lưu cấu hình để dựng lại nhanh nếu node/relayer Builder Hub hết hạn).
-- Deploy Teleporter và gửi ping **hai chiều** (Fuji C-Chain ↔ Dispute L1).
-- Compile một Noir circuit hello-world, sinh Solidity verifier và **deploy thử lên chính Dispute L1** để kiểm tra precompile và **kích thước contract (< 24KB)**.
+- MVP dùng **Document Summary Agent**. Dữ liệu demo là tài liệu giả, không dùng hợp đồng thật trong free-tier inference.
+- Agent không cần sở hữu ví, không được ký giao dịch hoặc trực tiếp quyết toán escrow.
+- `agentId` là định danh listing, không phải ID model nền tảng.
 
-**Điều kiện Go / No-Go cuối Ngày 1:** Phải có L1 chạy được + ping hai chiều thành công + verifier deploy được lên L1. Nếu L1/ICM bị chặn, chuyển sang local/dev L1; nếu verifier vượt quá 24KB hoặc thiếu precompile, chốt phương án dự phòng ngay từ cuối Ngày 1 (và ghi rõ trong tài liệu).
+### 7.2. Pipeline khiếu nại
 
-### Ngày 2 — Smart Contracts, Noir Circuit thật & AI Pipeline
-
-- **Blockchain:** Triển khai `MerchantPolicyRegistry`, `SettlementEscrow`, `MarketplaceGateway`, `DisputeInbox`, `DisputeManager`, `ProofGate`, `DisputeResultSender/Receiver` kèm unit test.
-- **ZK & Backend:** Hoàn thiện Noir circuit kiểm tra `policyCommitment` + `claimTimestamp` + hạn mức bồi thường; dựng API PostgreSQL + mã hóa AES-256-GCM.
-- **AI:** Triển khai pipeline 3 agent (Evidence → Policy → Resolution) trả về JSON có cấu trúc rõ ràng.
-
-### Ngày 3 — Tích hợp đầu-cuối (End-to-End)
-
-- Kết nối ví với Fuji C-Chain và Dispute L1.
-- Nối hoàn chỉnh luồng: Merchant tạo đơn + nạp cọc → Buyer mở hồ sơ → Teleporter sang L1 → AI chạy → ZK proof verified → Merchant/Arbitrator duyệt → Teleporter về C-Chain → `SettlementEscrow` giải ngân.
-- **Sản phẩm bàn giao cuối Ngày 3:** Chạy trọn vẹn 1 vụ từ lúc mở hồ sơ đến khi giải ngân trên UI mà không cần can thiệp console.
-
-### Ngày 4 — Hoàn thiện UI & Kiểm thử các trường hợp lỗi
-
-- Hoàn thiện UI: timeline hồ sơ trực quan, trạng thái `Proof verified on Dispute L1`, link explorer của cả 2 chain.
-- Kiểm thử lỗi: proof sai `policyCommitment` / sai `claimTimestamp` / tái sử dụng nullifier, Teleporter message bị phát lại, relayer chậm/dừng (hiển thị trạng thái chờ thay vì báo thành công giả).
-- Rà soát không để lộ dữ liệu nhạy cảm hay API key trong on-chain event hoặc console log.
-
-### Ngày 5 — Đóng băng tính năng, Quay video Demo & Làm Slide
-
-- Đóng băng tính năng; không thêm kiến trúc mới.
-- Quay video demo 3–5 phút trên dữ liệu giả lập sạch (kèm bản ghi dự phòng nếu testnet chập chờn).
-- Hoàn thiện slide (Kiến trúc 2 chain, Luồng commitment & ZK, Avalanche ICM, Impact & Giới hạn thực tế) và phụ lục kỹ thuật (chain ID, blockchain ID, địa chỉ contract/verifier, tx hash mẫu).
-
----
-
-## 12. Phân công trách nhiệm cho team 3 người
-
-| Vai trò | Phần việc chính | Cần phối hợp với |
+| Agent | Đầu vào | Đầu ra đề xuất |
 |---|---|---|
-| **Người 1: Blockchain / Avalanche** | Custom L1, Teleporter/relayer, toàn bộ Solidity contracts (`SettlementEscrow`, `MerchantPolicyRegistry`, `DisputeManager`, `ProofGate`...), deploy & unit test | Người 2 + Người 3 |
-| **Người 2: ZK & Backend** | Noir circuit, Solidity verifier (check < 24KB), Backend API, PostgreSQL + mã hóa AES-256-GCM, điều phối prover | Người 1 + Người 3 |
-| **Người 3: AI, Frontend & Tích hợp** | Pipeline 3 AI agents, Next.js DApp (timeline, reviewer console, explorer links), giữ đồng bộ ABI/event/schema, video demo & slide | Người 1 + Người 2 |
+| Evidence Agent | Buyer claim, chứng từ giả lập, kết quả service đã lưu | `facts`, `missingEvidence`, `references` |
+| Policy Agent | Chính sách được xác thực + facts | `relevantClauses`, `eligibilityObservations`, `suggestedWitnessFields` |
+| Resolution Assistant | Hồ sơ có cấu trúc + policy | `proposedRefundWei`, `reason`, `confidence/limitations` |
 
----
+**Cơ chế tin cậy:** Model có thể nhầm hoặc hallucinate. Backend/prover phải lấy chính sách gốc đã xác thực từ nguồn tin cậy và tự kiểm tra giá trị witness trước khi tạo proof. Đầu ra AI là **khuyến nghị**, không phải dữ liệu pháp lý/chứng từ có xác nhận.
+
+### 7.3. Human in the loop
+
+- Merchant/Reviewer được cấp quyền mới có thể `approve`/`reject` qua ví hợp lệ trên Dispute L1.
+- Trọng tài giải quyết trường hợp chuyển cấp theo chính sách công bố.
+- Proof hợp lệ **chỉ** chứng minh điều kiện trong circuit, **không đủ** chứng minh chất lượng bản tóm tắt kém, sự thật của hóa đơn hoặc tính công bằng của đề xuất.
+
+## 8. Dữ liệu, bảo mật và quyền riêng tư
+
+### 8.1. Dữ liệu công khai và riêng tư
+
+| Loại dữ liệu | Lưu ở đâu? | Công khai? |
+|---|---|---|
+| `agentId`, Seller, giá AVAX, `orderId`, Buyer, tx hash | Fuji C-Chain | **Có** |
+| `policyCommitment`, `policyVersionHash`, purchase/claim timestamps, refund on-chain | Fuji C-Chain/Dispute L1 | **Có** |
+| Tài liệu, PDF, evidence, service input/output | PostgreSQL, mã hóa AES-256-GCM tại ứng dụng | **Không** |
+| Điều khoản riêng tư (dispute window/maxRefund), nonce commitment | Nguồn dữ liệu tin cậy được mã hóa ngoài chain | **Không** |
+| Lịch sử AI, prompt riêng tư, thông tin liên hệ | Backend có kiểm soát truy cập; tránh log nội dung nhạy cảm | **Không** |
+| API key, DB password, encryption key, private witness | Environment/secrets manager phía server | **Không** |
+
+**Giới hạn rõ ràng:** AVAX transfer, địa chỉ ví, thời gian giao dịch và các public input **không ẩn** bởi ZK. Dùng ZK để giấu **điều khoản hợp đồng được cam kết**, không tuyên bố toàn bộ hoạt động marketplace là private.
+
+### 8.2. AES-256-GCM và kiểm soát truy cập
+
+- Dùng HTTPS; kiểm tra MIME/type, dung lượng tệp; mã hóa nội dung nhạy cảm **trước khi lưu**; lưu IV/nonce riêng cho mỗi bản ghi, auth tag và key version; không dùng lại nonce dưới cùng khóa.
+- Mỗi người dùng chỉ xem order/evidence mà họ có quyền. Reviewer chỉ nhận nội dung tối thiểu cần thiết.
+- Không lưu khóa mã hóa trong cùng database plaintext. Quản lý các khóa trong environment/secret manager có phân quyền; không log key, prompt riêng tư hoặc witness.
+- Backend/DB nên có account staging riêng, quyền tối thiểu, dữ liệu test giả lập. Không đưa API key Gemini/Groq vào `NEXT_PUBLIC_*`.
+
+### 8.3. Threat model ngắn gọn
+
+- **Replay/double payout:** message IDs + nonce, processed flags, idempotent receiver, kiểm tra `SETTLED`.
+- **Sai nguồn ICM:** xác thực caller Teleporter messenger, source blockchain ID và sender contract được allowlist.
+- **AI hallucination:** JSON schema, nguồn witness tin cậy, reviewer cuối cùng.
+- **Chỉnh sửa policy sau checkout:** commitment và policy version bất biến theo order.
+- **Lặp chạy model/API abuse:** xác thực paid order, idempotency key, rate limit, per-order execution count.
+- **Lộ dữ liệu:** không đưa file/witness riêng tư lên chain hoặc gửi model provider nếu không được phép.
+- **Sybil attack:** tạo nhiều ví để lợi dụng ưu đãi/rating **chưa có cơ chế xác minh danh tính/chống Sybil chuyên biệt trong P0**; không quảng bá nullifier hay allowlist như giải pháp chống Sybil. Bổ sung khi có use case/rubric xác thực.
+
+## 9. ZK circuit: chứng minh điều khoản dịch vụ
+
+### 9.1. Điều cần chứng minh
+
+Với mỗi `orderId`, người mua đã thanh toán và Seller đã xác nhận chính sách tại checkout. Circuit phải chứng minh:
+
+1. Private policy fields thật sự mở được `policyCommitment` đã neo on-chain tại checkout.
+2. `purchaseTimestamp <= claimTimestamp <= purchaseTimestamp + disputeWindowSeconds`, với hai timestamp do **C-Chain** ghi nhận, không lấy tùy ý từ AI/backend.
+3. `refundAmountWei <= maxRefundWei` theo chính sách bí mật **và** `refundAmountWei <= priceWei` của order (P0 chỉ hoàn tối đa phí đã escrow).
+4. Proof gắn với đúng `caseId`, `orderId`, policy version và chain/domain, có nullifier duy nhất.
+5. Số tiền refund thực thi **chính là** `refundAmountWei` public mà verifier đã xác minh và reviewer phê duyệt.
+
+### 9.2. Mô hình input khuyến nghị
+
+| Input | Public / Private | Nguồn |
+|---|---|---|
+| `orderIdField`, `caseIdField`, `domain`, `policyVersionField` | Public | On-chain order và Dispute Inbox, với encoding nhất quán |
+| `policyCommitment` | Public | Ghi trong transaction `purchaseService` |
+| `purchaseTimestamp`, `claimTimestamp` | Public | `block.timestamp` lúc checkout và mở case trên Fuji |
+| `refundAmountWei`, `priceWei` | Public | Đề xuất đã chốt, order public; sẽ được đối chiếu lúc settlement |
+| `disputeWindowSeconds`, `maxRefundWei`, `nonce` | Private | Chính sách Seller chấp nhận trước checkout, giữ mã hóa ngoài chain |
+| `nullifier` | Public | Circuit ràng buộc từ case/order/nonce/domain |
+
+**Thiết kế commitment minh họa (pseudo-spec, chưa phải mã Noir chạy được):**
+
+```text
+policyCommitment = Poseidon(
+  "POLICY_V1", chainDomain, orderIdField, policyVersionField,
+  disputeWindowSeconds, maxRefundWei, nonce
+)
+
+nullifier = Poseidon("CASE_V1", chainDomain, orderIdField, caseIdField, nonce)
+
+assert(purchaseTimestamp <= claimTimestamp)
+assert(claimTimestamp <= purchaseTimestamp + disputeWindowSeconds)
+assert(refundAmountWei <= maxRefundWei)
+assert(refundAmountWei <= priceWei)
+assert(recomputedCommitment == onChainPolicyCommitment)
+assert(recomputedNullifier == suppliedNullifier)
+```
+
+- **Thời điểm commit:** `orderId` phải tính được trước lúc checkout hoặc quote phải dùng một định danh order/nonce xác định có thể kiểm tra trong contract. Contract lưu `purchaseTimestamp` thật khi thanh toán; không dự đoán block timestamp.
+- **Liên kết Seller:** Quote/policy phải được Seller xác nhận (chẳng hạn EIP-712 signature hoặc cơ chế policy listing được quản lý minh bạch); backend không được tự đặt các điều khoản có lợi lúc phát sinh khiếu nại.
+- **Encoding:** Chốt chính xác Poseidon variant, kiểu `Field`, cách chuyển `bytes32`/`uint256` sang field và domain separation; kiểm tra overflow/boundary của timestamp và số tiền. Cần cùng encoding ở TypeScript, Noir và Solidity wrapper.
+- **Replay:** Solidity `ProofGate` so sánh public inputs với case on-chain và đánh dấu nullifier `used`; không xem phép hash đơn thuần là đủ nếu không được ràng buộc trong circuit.
+- **Bảo mật:** `refundAmountWei` và transfer on-chain vẫn công khai. Không dùng ZK để quảng bá “ẩn số AVAX đã chuyển”.
+
+**Biến thể warranty từ README gốc (P1):** Có thể cam kết `warrantyEndTimestamp` riêng tư thay `disputeWindowSeconds`; kiểm tra `purchaseTimestamp <= claimTimestamp <= warrantyEndTimestamp`. Đây là **một policy profile khác**, không cần implement đồng thời trong P0.
+
+### 9.3. ZK không chứng minh điều gì?
+
+- Không chứng minh AI đã tóm tắt tài liệu đúng, output thật sự kém chất lượng, hợp đồng tải lên là thật, hoặc bằng chứng của Buyer đáng tin cậy.
+- Không thay thế việc Seller xác nhận chính sách lúc checkout, chữ ký tài liệu, phân quyền reviewer, mã hóa tệp, hay kiểm soát model provider.
+- Không bảo đảm công bằng/pháp lý của phán quyết. Phần này do reviewer được ủy quyền đánh giá.
+
+### 9.4. Tích hợp Noir/Barretenberg
+
+1. Ngày 1: Tạo **hello-world circuit**, compile, sinh proof và Solidity verifier, deploy thử lên **Dispute L1**; kiểm tra EVM precompiles, bytecode size và gas thực tế. Có thể gặp giới hạn kích thước EVM contract (~24 KiB cho runtime code nếu không tùy chỉnh).
+2. Ngày 2: Viết `circuits/policy-eligibility`, chạy test good/bad witness. Với toolchain hiện hành, có thể dùng `nargo execute` để tạo witness rồi `bb prove`/`bb verify`; pin versions `nargo` và `bb` đã được kiểm chứng, không giả định câu lệnh giữa các release giống hệt nhau.
+3. Sinh verifier cho circuit hoàn chỉnh, deploy, gọi bằng `ProofGate` và truyền **public inputs đúng thứ tự và encoding**.
+4. Kiểm thử proof sai commitment, sai case, sai timestamp, vượt refund, nullifier reuse, amount mismatch.
+5. Thu metrics: proof generation time, verifier runtime bytecode, gas verify.
+
+## 10. Backend, API và tích hợp
+
+### 10.1. API giao tiếp đề xuất
+
+| API | Mục đích | Quyền |
+|---|---|---|
+| `GET /api/agents` | Browse listing curated | Public |
+| `GET /api/agents/:id` | Detail, price, published policy summary | Public |
+| `GET /api/orders/:id` | Xem order + execution/dispute status | Buyer/Seller/Reviewer được phân quyền |
+| `POST /api/orders/:id/execute` | Trigger Service Agent sau khi order đã paid | Buyer đã xác thực |
+| `GET /api/orders/:id/result` | Xem output được ủy quyền | Buyer và quyền hợp lệ |
+| `POST /api/cases/upload` | Upload evidence mã hóa | Buyer của order |
+| `GET /api/cases/:id` | Timeline và review information | Các bên liên quan có quyền |
+| `POST /api/cases/:id/prepare-proof` | Điều phối ZK proof, không trả private witness | Auth/service role được phân quyền |
+
+Contract write (`purchaseService`, `openCase`, `approve`, `accept`) đi qua **wallet + transaction**; backend chỉ cung cấp API đọc, upload, execute và orchestration cần thiết. Nếu backend dùng một ví submitter để gửi proof, ví đó có quyền tối thiểu, riêng với ví quản trị.
+
+### 10.2. PostgreSQL tối thiểu
+
+```text
+agent_listings_cache(agent_id, seller, price_wei, metadata, updated_at)
+service_orders(order_id, buyer, seller, agent_id, tx_hash, status,
+               policy_ciphertext, policy_iv, policy_tag, version)
+agent_outputs(order_id, ciphertext, iv, tag, model_info, result_hash)
+cases(case_id, order_id, status, claim_tx_hash, created_at)
+evidence(evidence_id, case_id, ciphertext, iv, tag, content_hash)
+processed_events(chain_id, tx_hash, log_index, handled_at)
+```
+
+- Schema chỉ mô tả dữ liệu cần thiết, **không phải DB migration đã tồn tại**.
+- `chain_id` trong bảng event là identifier của mạng dùng cho listener; khi làm ICM luôn lưu **Avalanche blockchain ID** riêng để tránh nhầm với EVM chain ID.
+- Event handlers có checkpoint và **idempotent**: xử lý lại event/restart backend không tạo thêm order, proof submission hoặc payout.
+
+### 10.3. Thống nhất interface từ đầu
+
+```text
+ServicePurchased {
+  orderId, agentId, buyer, seller, priceWei,
+  policyCommitment, policyVersionHash, purchaseTimestamp
+}
+CaseOpened {
+  caseId, orderId, policyCommitment, policyVersionHash,
+  purchaseTimestamp, claimTimestamp, sourceBlockchainID, messageNonce
+}
+CaseResolutionCommitted {
+  caseId, orderId, outcomeCode, refundAmountWei,
+  proofReference, reviewerApprovalReference, messageNonce
+}
+```
+
+Các team phải chốt: chính xác type, ABI, event names, enum, REST schema JSON, cách truyền phí, source chain/sender, và phiên bản contract. Code tạo/nhận message phải phù hợp interface Teleporter thật đang dùng; cấu trúc ở trên là **payload nghiệp vụ**, không phải ABI của TeleporterMessenger.
+
+## 11. Kế hoạch hackathon Ngày 1–5
+
+> Kế hoạch Day 2–5 chi tiết theo người và khung giờ: [`AVALANCHE_DISPUTE_TO_MARKETPLACE_PLAN_DAY2_DAY5.md`](./AVALANCHE_DISPUTE_TO_MARKETPLACE_PLAN_DAY2_DAY5.md). Bảng dưới là **tóm tắt chính thức trong README**, thống nhất với kế hoạch V2.
+
+### Ngày 1 — Khóa phạm vi và kiểm tra rủi ro cao (Go / No-Go)
+
+- Chốt MVP là **1 Service Agent curated + 3 Dispute Agents + private dispute protocol**, không mở rộng listing vô hạn.
+- Tạo Custom L1, test RPC và chain IDs; Teleporter ping **hai chiều** Fuji ↔ Dispute L1.
+- Compile Noir hello-world, tạo proof/verifier và **deploy thử trên đúng L1**; kiểm tra bytecode/precompiles/gas.
+- Thống nhất order/escrow/policy/dispute flow; chuẩn bị mock event JSON và policy sample.
+- **Gate:** Nếu L1/ICM/verifier không khả thi, chốt phương án hạ scope trước khi làm UI phức tạp; không trì hoãn việc kiểm tra verifier đến Ngày 4.
+
+### Ngày 2 — Core contracts + ZK + Marketplace skeleton
+
+| Người | Nhiệm vụ chính | Đầu ra |
+|---|---|---|
+| **Người 1 — Blockchain** | `AgentRegistry`, `ServiceOrderManager`, order-specific `SettlementEscrow`; Gateway/Inbox/Manager/ProofGate/Receiver/Sender | Test local `register → purchase → escrow`, ABI/event schemas, dispute state tests |
+| **Người 2 — ZK & Backend** | Noir circuit với `refundAmountWei` public; PostgreSQL/AES; order auth/API; prover + mocks | Good/bad witness; API + DB local hoạt động; fixture JSON |
+| **Người 3 — AI/UI** | 1 Document Summary Service Agent gọi model API; 3 Dispute Agents; Next.js browse/buy/execute/result/dispute/reviewer | Agent chạy thật; UI có thể click hết flow bằng mock |
+
+**Gate cuối Ngày 2:** ít nhất 1 purchase/escrow local pass, 1 service inference thật, 1 good + 1 bad ZK test. Nếu thiếu cơ sở hạ tầng core, **hạ Service Agent xuống P1** và trở về Dispute Protocol gốc thay vì tuyên bố marketplace hoàn chỉnh.
+
+### Ngày 3 — End-to-end Integration
+
+- **Sáng:** Deploy 2 chain, cấu hình relayer/allowlist; chia sẻ ABI và manifests; backend event listener, frontend ví thật và API.
+- **Chiều:** Chạy hai kịch bản trên testnet thật: **A)** Buy → Execute → Accept → Seller payout; **B)** Buy → Execute → Dispute → 3 Agents + ZK → Reviewer → ICM → Refund.
+- UI chạy end-to-end **không cần gõ lệnh terminal để can thiệp happy path**. Lưu tx hashes, proof receipt, message IDs.
+- **Gate cuối Ngày 3:** Nếu chưa xong một trong hai luồng, dừng mở rộng; **không thêm Service Agent thứ hai**.
+
+### Ngày 4 — Bảo mật, thất bại và UX (không thêm tính năng mới)
+
+- Test sai commitment, sai amount, quá hạn dispute, replay nullifier/message, order đã settled, role giả, double payout.
+- Test event listener restart, API quota, upload không hợp lệ, lỗi chain/relayer chậm: UI hiện `PENDING`, không hiển thị payout thành công giả.
+- Reviewer UX, explorer links, metrics gas/proof/latency; demo data sạch; record thử.
+- **Gate:** Hoàn thiện 1 service + 3 dispute agents và đủ case chấp nhận/hoàn tiền/thất bại; chỉ sửa blocker, không thêm agent mới.
+
+### Ngày 5 — Freeze, demo, slide và submission
+
+- **Freeze code logic**; quay video demo 3–5 phút + video dự phòng, lưu tx hashes/proof receipts.
+- Hoàn thiện README deployment thực tế, slide architecture/marketplace/trust/ICM/ZK/human review, limitations.
+- Điền chain IDs, RPC URLs, contract addresses, explorer links; **không bịa số liệu chưa đo**.
+- Nộp dự án trước hạn thực tế và dự phòng thời gian khắc phục lỗi demo.
+
+## 12. Phân công 3 người và quy trình phối hợp
+
+| Người | Ownership chính | Phải bàn giao |
+|---|---|---|
+| **1 — Blockchain/Avalanche** | L1, relayer, Fuji/L1 contracts, role/escrow/ICM, deploy/test | ABI, contract address, chain manifest, event/tx evidence |
+| **2 — ZK/Backend** | Noir, verifier integration, policy witness, API, PostgreSQL/AES, event listener | Proof good/bad, test fixtures, APIs, migrations, staging backend |
+| **3 — AI/Frontend** | 1 Service Agent, 3 Dispute Agents, Next.js marketplace/reviewer, video/slide | AI JSON schema, app flows, demo UX, integration tests |
+
+### 12.1. Quy tắc GitHub và chia sẻ secrets
+
+- Dùng **một repo** với `main`, `feat/blockchain`, `feat/backend-zk`, `feat/frontend-ai`; PR + review nhanh, merge nhiều lần trong ngày.
+- Mỗi người tự tạo **ví test riêng**, tuyệt đối không chia sẻ private key/seed phrase. Ví deploy/admin, buyer, seller và arbitrator test phải phân quyền rõ.
+- API key model/DB password/nonce/private witness không commit; dùng `.env.example` và staging secret manager. API key chỉ được gọi từ server.
+- Local DB mỗi người tự chạy (có thể Docker nếu đã cấu hình); **staging DB chung** nhưng account quyền tối thiểu, frontend không truy cập DB trực tiếp.
+- Chia sẻ RPC URL, EVM chain ID, Avalanche blockchain ID, ABI, deployed contract addresses và **tx hashes** vì đây là dữ liệu công khai.
+
+### 12.2. Cách tích hợp mà không chờ đủ ba người
+
+1. Chốt schema `ServicePurchased`, `CaseOpened`, `CaseResolutionCommitted`, AI JSON và REST responses trước **10:00 Ngày 2**.
+2. Người 1 chạy contract unit tests; Người 2 dùng mock events để viết backend; Người 3 dùng mocked API/orders cho frontend.
+3. Đưa bản hợp đồng và backend đầu tiên lên staging ngay Ngày 2, không chờ Ngày 3 mới trao code.
+4. Thay mock dần bằng chain/API thật, kiểm thử cả quyền ví và xử lý các sự kiện trễ/lặp.
+5. Kiểm thử E2E bằng **cùng một service order/case ID** trên UI, DB và hai explorers.
 
 ## 13. Cấu trúc repository
 
 ```text
 project/
 ├── apps/
-│   ├── web/                 # Next.js DApp
-│   └── api/                 # Backend API + AES-256-GCM storage (PostgreSQL)
+│   ├── web/                     # Next.js marketplace + dispute UI
+│   └── api/                     # REST API, event listeners, auth, PostgreSQL/AES
 ├── services/
-│   ├── agents/              # Evidence, Policy, Resolution agents
-│   └── prover/              # Noir witness/proof orchestration
+│   ├── service-agents/          # P0 Document Summary Agent
+│   ├── dispute-agents/          # Evidence / Policy / Resolution
+│   └── prover/                  # Witness and Noir/Barretenberg integration
 ├── contracts/
-│   ├── c-chain/             # MerchantPolicyRegistry, SettlementEscrow, Gateway, ResultReceiver
-│   ├── dispute-l1/          # DisputeInbox, DisputeManager, ProofGate, ResultSender
+│   ├── c-chain/                 # AgentRegistry, ServiceOrderManager, Escrow,
+│   │                            # MarketplaceGateway, DisputeResultReceiver
+│   ├── dispute-l1/              # DisputeInbox, DisputeManager, ProofGate,
+│   │                            # DisputeResultSender, Solidity Verifier
 │   └── test/
 ├── circuits/
-│   └── policy-eligibility/  # Noir source + test vectors
+│   └── policy-eligibility/      # Noir source, prover fixtures, test vectors
+├── deployments/
+│   ├── fuji.json                # Public contract addresses, RPC/IDs
+│   └── dispute-l1.json          # Public contract addresses, RPC/IDs
 ├── infra/
-│   ├── avalanche-l1/        # Genesis/config/deployment notes
-│   └── icm/                 # Teleporter + relayer configuration
+│   ├── avalanche-l1/           # Genesis, setup guide, public network config
+│   └── icm/                    # Teleporter/relayer setup notes
 ├── docs/
-│   ├── architecture.md
+│   ├── api-contract.md
 │   ├── message-schema.md
+│   ├── threat-model.md
 │   └── demo-script.md
+├── .env.example                # Variable names ONLY
+├── .gitignore
+├── AVALANCHE_DISPUTE_TO_MARKETPLACE_PLAN_DAY2_DAY5.md
 └── README.md
 ```
 
-Không commit `.env`, private key, API key, tài liệu người dùng thật chưa mã hóa hoặc prover secret. Hãy tạo `.env.example` chỉ chứa tên biến mẫu, không chứa giá trị bí mật.
+Cây thư mục này là **kiến trúc đề xuất**, không khẳng định các thư mục/code đã tồn tại trong repository.
 
----
+## 14. Kiểm thử và tiêu chí nghiệm thu
 
-## 14. Kịch bản demo (3–5 phút)
+### 14.1. Unit/Integration test bắt buộc
 
-**Tình huống:** Một khách hàng mua thiết bị có bảo hành; Người bán đã nạp cọc vào `SettlementEscrow` và cam kết `policyCommitment` lên C-Chain lúc mua. Khi thiết bị hỏng, Người mua gửi khiếu nại. Ngày mua, ngày hết hạn bảo hành và mức bồi thường tối đa đều là dữ liệu riêng tư.
-
-1. **Thiết lập đơn hàng & Escrow (30 giây):** Trên Fuji C-Chain, hiển thị đơn hàng đã được Người bán nạp cọc `SettlementEscrow` và ghi nhận `policyCommitment` từ lúc mua.
-2. **Mở hồ sơ (30–40 giây):** Người mua gửi bằng chứng giả lập qua form riêng tư; giải thích file được mã hóa AES-256-GCM trong PostgreSQL và C-Chain ghi nhận `claimTimestamp = block.timestamp`.
-3. **Trình diễn ICM (30–45 giây):** Mở giao dịch C-Chain hiển thị `CaseOpened`; chuyển sang explorer của Dispute L1 cho thấy hồ sơ đã được nhận.
-4. **Trình diễn AI pipeline (40–50 giây):** Hiển thị đầu ra có cấu trúc của Evidence Agent → Policy Agent → Resolution Assistant (nêu rõ AI chỉ hỗ trợ chuẩn bị hồ sơ, không tự quyết định).
-5. **Trình diễn ZK (40–60 giây):** Tạo proof; hiển thị public input (`caseId`, `policyCommitment` từ lúc mua, `claimTimestamp`, `eligible`) và các trường witness giữ bí mật. Gửi proof lên L1 → `ProofVerified`. Demo thêm 1 case sai điều kiện để thấy hệ thống từ chối.
-6. **Phê duyệt & Giải ngân (45–60 giây):** Người bán (hoặc Trọng tài khi kháng nghị) bấm duyệt trên Dispute L1 → Teleporter gửi `CaseResolutionCommitted` về C-Chain → `SettlementEscrow` giải ngân bồi thường cho Người mua. Hiển thị đủ tx hash cả hai chain.
-
-Không để lộ tệp contract thật, tên, địa chỉ, dữ liệu cá nhân hoặc API credential trong demo trực tiếp. Chỉ dùng dữ liệu tổng hợp/giả lập.
-
----
-
-## 15. Đối chiếu với thang điểm ban giám khảo
-
-| Tiêu chí | Những gì ban giám khảo cần kiểm chứng được | Những gì làm giảm điểm |
+| Thành phần | Case thành công | Case thất bại bắt buộc |
 |---|---|---|
-| Technical Implementation (25) | Luồng Escrow/Commitment lúc mua → Khiếu nại → AI pipeline → ZK proof → Duyệt → Giải ngân hoạt động thật; có test proof sai | Chỉ có UI mock, backend tự tạo commitment lúc khiếu nại, không test proof sai |
-| Avalanche Integration (25) | Custom L1 đã deploy, Teleporter message hai chiều thực sự, trạng thái relayer, contract/event trên cả hai chain | Chỉ thêm ví Avalanche; không có giao nhận xuyên chain thực tế; L1 không có vai trò riêng |
-| Creativity & Innovation (15) | Kết hợp AI chuẩn bị hồ sơ + ZK kiểm tra điều kiện hợp đồng bảo mật + Escrow xuyên chain trên Avalanche | AI tự ý giải ngân tiền hoặc nhét ZKML nặng nề không chạy thật |
-| Impact & Use Case (15) | Kịch bản bảo hành/khiếu nại thương mại rõ ràng, bảo vệ quyền riêng tư hợp đồng, có dòng tiền Escrow thực tế | Bắt người mua phải mua license AI trước khi khiếu nại; không có dòng tiền bồi thường |
-| Presentation & Pitch (10) | Câu chuyện một mạch rõ ràng, lý do kiến trúc thuyết phục, nêu thẳng giới hạn | Ghép hai sản phẩm rời rạc, nêu thuật ngữ mà không giải thích |
-| UI/UX & Demo (10) | Timeline hồ sơ dễ hiểu, giao diện Người bán / Trọng tài rõ ràng, hiển thị link explorer 2 chain | Quá nhiều màn hình kỹ thuật, chuyển chain gây khó hiểu |
+| Listing + Order | Seller approved; Buyer mua giá đúng | agent inactive; giá sai; quote/policy không hợp lệ; duplicate order |
+| Escrow | Buyer Accept → Seller nhận tiền | double payout; reentrancy; accept sau dispute; refund quá balance |
+| Service Runtime | Paid Buyer execute → output JSON | chưa paid; sai quyền; quá quota; execute lặp |
+| ICM | `CaseOpened` và `CaseResolutionCommitted` được nhận | sai chain/sender; duplicate message; pending relay |
+| ZK | Proof chính sách hợp lệ được L1 verify | sai commitment/case/version/amount; hết hạn; nullifier cũ |
+| Reviewer | Đúng role approve exact amount | ví lạ approve; reviewer đổi amount mà không tạo proof mới |
+| Data | Encrypt/decrypt đúng, chỉ authorized đọc | sai key/auth; public file; nhầm frontend/server secrets |
 
-### Câu pitch đề xuất
+### 14.2. Tiêu chí xác nhận marketplace MVP
 
-> “Chúng tôi xây dựng giao thức xử lý khiếu nại và bảo hành bảo vệ quyền riêng tư trên Avalanche: Fuji C-Chain giữ tiền ký quỹ `SettlementEscrow` và `policyCommitment` từ lúc mua hàng; một Avalanche L1 chuyên dụng điều phối tranh chấp; Teleporter kết nối hai chain; AI pipeline chuẩn bị hồ sơ; còn zero-knowledge proof chứng minh khiếu nại hợp lệ theo điều khoản đã cam kết mà không làm lộ dữ liệu nhạy cảm.”
+- [ ] Có **1 listing Service Agent** với tên, seller, giá và chính sách.
+- [ ] Buyer dùng ví khác Seller, **mua thực sự bằng AVAX testnet**; C-Chain có `orderId` và escrow.
+- [ ] **Service Agent gọi model API thật**, chỉ chạy khi order đã thanh toán; có output lưu và hiển thị cho Buyer.
+- [ ] Buyer **Accept** → tiền chuyển Seller **một lần**.
+- [ ] Buyer **Dispute** → Teleporter 2 chiều, 3 Dispute Agents, ZK verify và human approval → refund phù hợp.
+- [ ] Case quá hạn/không đúng commitment/bị replay bị chặn; có explorer receipts.
+- [ ] Demo nhất quán: một sản phẩm, một giao diện, hai hướng kết thúc order.
 
----
+Nếu thiếu phần mua/execute/accept, hãy giới thiệu trung thực là **Dispute Protocol prototype với marketplace đang phát triển**, không gọi là marketplace đã chạy.
 
-## 16. Rủi ro và những gì chủ động không làm
+## 15. Kịch bản demo và pitch
 
-### Rủi ro kỹ thuật
+### 15.1. Video 3–5 phút
 
-- **Vận hành L1 & Relayer:** node/relayer Builder Hub có thể hết hạn. Lưu lại cấu hình để dựng lại nhanh và thêm trạng thái chờ/khôi phục thủ công khi relayer chậm.
-- **Kích thước & Tương thích Verifier:** EVM verifier của Barretenberg dễ chạm giới hạn 24KB và cần precompile đặc thù. Bắt buộc test deploy lên Dispute L1 ngay Ngày 1.
-- **Rò rỉ quyền riêng tư & Gian lận input:** `policyCommitment` phải được ghi từ lúc mua hàng, `claimTimestamp` phải lấy từ `block.timestamp` on-chain. Không để lộ dữ liệu nhạy cảm trong event hoặc log.
-- **Độ tin cậy AI:** Giữ đầu ra có cấu trúc, bắt buộc con người (Merchant/Arbitrator) phê duyệt cuối cùng.
+| Thời gian | Nội dung |
+|---|---|
+| 0:00–0:35 | Vấn đề: mua dịch vụ AI thiếu bảo đảm khi kết quả không như cam kết; cần giữ riêng tư điều khoản |
+| 0:35–1:00 | Marketplace: Document Summary Agent, seller, giá và terms |
+| 1:00–1:40 | Buyer mua bằng test AVAX, `policyCommitment` ghi lúc checkout; agent chạy API thật |
+| 1:40–2:35 | Buyer khiếu nại; ICM sang Dispute L1; 3 Dispute Agents đề xuất; ZK proof xác minh |
+| 2:35–3:25 | Reviewer phê duyệt → ICM về C-Chain → escrow refund, hiển thị 2 explorers |
+| 3:25–4:00 | Proof sai điều kiện bị chặn; test chống double payout |
+| 4:00–4:30 | Roadmap: curated 1 agent → nhiều listings/providers → marketplace mở |
 
-### Những gì không đặt làm mục tiêu cho MVP
+Có thể chèn đoạn ngắn **Accept → Seller payout** bằng giao dịch thứ hai. Dùng dữ liệu giả lập, không để lộ nội dung tài liệu người dùng, private key hoặc secrets trong video.
 
-- Marketplace đa agent & `AgentLicense` NFT (chuyển sang P2).
-- zkML cho model phân loại hay LLM (bỏ khỏi MVP).
-- Object storage phức tạp (chỉ dùng PostgreSQL + AES-256-GCM).
-- Nền kinh tế validator permissionless chuẩn production hay ra mắt mainnet.
+### 15.2. Slide đề xuất (10–12 trang)
 
----
+1. Problem & user pain.
+2. Product: AI Service Marketplace + Private Dispute Protocol.
+3. Buyer journey: Browse → Buy → Execute → Accept/Dispute.
+4. System architecture: Fuji C-Chain + Custom Dispute L1 + ICM + backend AI/ZK.
+5. Marketplace MVP: on-chain listing/payment and API-backed execution.
+6. Why Avalanche L1? Dispute workflow domain vs public settlement domain.
+7. Why Teleporter? Authenticated two-way case/resolution messages.
+8. Why ZK? Validate committed private dispute terms and public refund constraints.
+9. Three Dispute Agents + human approval; what AI/ZK cannot prove.
+10. Demo receipts, proof/gas/latency metrics **đã đo thực tế**.
+11. Security/replay/role tests và giới hạn MVP.
+12. Roadmap P1/P2 và khả năng mở rộng.
 
-## 17. Checklist triển khai theo mức độ ưu tiên
+### 15.3. Thông điệp pitch
 
-### P0 — Bắt buộc phải hoạt động (MVP 5 ngày)
+> “Chúng tôi xây dựng AI Service Marketplace trên Avalanche, nơi người dùng có thể mua và chạy AI Agent bằng AVAX testnet. Điểm khác biệt là mỗi giao dịch gắn với một chính sách dịch vụ đã được cam kết trước; nếu có tranh chấp, ba AI Agents hỗ trợ chuẩn bị hồ sơ, zero-knowledge proof xác minh các điều kiện bí mật, con người phê duyệt và Teleporter chuyển quyết định từ Dispute L1 về Fuji C-Chain để giải ngân escrow.”
 
-- [ ] Kết nối ví trên Fuji C-Chain và Dispute L1.
-- [ ] Tạo custom Avalanche L1 trên Fuji; ghi lại RPC, EVM chain ID và blockchain ID.
-- [ ] Teleporter message hai chiều thực tế: C-Chain → L1 và L1 → C-Chain.
-- [ ] `MerchantPolicyRegistry` + `SettlementEscrow` (nạp cọc + ghi `policyCommitment` lúc mua, giải ngân khi thắng).
-- [ ] Pipeline 3 AI agent với đầu ra JSON có cấu trúc riêng biệt.
-- [ ] Lưu trữ bằng chứng off-chain mã hóa AES-256-GCM trong PostgreSQL.
-- [ ] Một Noir policy circuit ràng buộc với `policyCommitment` (từ lúc mua) và `claimTimestamp` (public `block.timestamp`).
-- [ ] Deploy và kiểm thử Solidity verifier (< 24KB) ngay trên Dispute L1 thực tế.
-- [ ] Luồng duyệt của Merchant (và Arbitrator khi từ chối/timeout) kích hoạt giải ngân Escrow qua Teleporter.
-- [ ] Demo đầu-cuối từ lúc mua hàng/nạp cọc đến khi giải ngân bồi thường.
+## 16. Ưu tiên P0/P1/P2 và phương án dự phòng
 
-### P1 — Các phần bổ sung nếu còn thời gian
+### P0 — Bắt buộc trong hackathon
 
-- [ ] Chống phát lại và allowlist cross-chain message chi tiết.
-- [ ] Test proof không hợp lệ / sai `policyCommitment` / sai `claimTimestamp` / nullifier bị dùng lại.
-- [ ] Khôi phục thủ công khi Teleporter message bị kẹt lúc relay.
-- [ ] Link explorer on-chain của cả 2 chain ngay trong UI.
+- [ ] **1 curated Document Summary Service Agent** với API-backed execution thật.
+- [ ] `AgentRegistry` + `ServiceOrderManager` + service payment `SettlementEscrow` trên Fuji.
+- [ ] Checkout tạo `policyCommitment` bất biến và lưu timestamp on-chain.
+- [ ] Hai luồng **Accept / Dispute** kết thúc bằng settlement đúng số.
+- [ ] 3 Dispute Agents + PostgreSQL/AES-256-GCM + prover service.
+- [ ] Custom L1 + Teleporter **hai chiều** + proof thật được verify on-chain (nếu vượt gate hạ tầng Ngày 1).
+- [ ] Reviewer có quyền ký quyết định; chống replay, wrong amount và double payout.
+- [ ] UI/README/tx hashes minh bạch; ít nhất 1 happy path E2E.
+
+### P1 — Chỉ khi P0 chạy ổn cuối Ngày 3
+
+- Service Agent thứ hai (ví dụ Code Review hoặc Research) với cùng runtime adapter.
+- Hỗ trợ `MerchantPolicyRegistry`/warranty collateral cho giao dịch hàng hóa ngoài marketplace (tương thích ý tưởng ban đầu).
+- Nâng UX appeal/timeout, metrics dashboard và vận hành relayer dài hạn.
+- Không thêm P1 trong Ngày 4–5 nếu chưa có E2E đầy đủ.
 
 ### P2 — Sau hackathon
 
-- [ ] Mở rộng thành AI Agent Marketplace (`AgentRegistry`, `AgentLicense` NFT cho bên thứ ba).
-- [ ] Thử nghiệm zkML inference nhỏ với EZKL.
-- [ ] Relayer tự host với monitoring và nhiều validator phi tập trung hơn.
-- [ ] Audit smart contract, ZK circuit và threat modeling chính thức.
+- Nhiều Seller đăng agent, kiểm duyệt/ủy quyền listing; nâng khả năng xử lý order lớn và nhiều API providers.
+- Reputation/rating; **chống Sybil** nếu mở reward/rating/airdrop; mô hình xác minh phù hợp quyền riêng tư và yêu cầu hackathon thực tế.
+- `AgentLicense` NFT, subscription, agent composition, phân chia doanh thu, sandbox execution.
+- Warranty-as-a-service cho bên ngoài Marketplace, multi-L1 dispute networks, audit, production validator/relayer.
+- **zkML** chỉ khi có câu hỏi giá trị đủ rõ và chứng minh được model/circuit cụ thể; không gắn zkML chỉ để thêm buzzword.
+
+### Go / No-Go và cắt giảm phạm vi
+
+| Thời điểm | Gate | Nếu không đạt |
+|---|---|---|
+| Cuối Ngày 1 | L1, ping ICM hai chiều, Noir verifier deploy thử | Ưu tiên xử lý hạ tầng/viết rõ fallback; **không mở scope marketplace** |
+| Cuối Ngày 2 | Local purchase/escrow, Service Agent API thật, good/bad proof | Cắt Service Agent khỏi P0 nếu dispute core đang chậm |
+| Ngày 3 trưa | Buy → Execute → Result trên staging | Đóng băng UI phụ, tập trung tích hợp |
+| Ngày 3 chiều | Accept → Seller; Dispute → Refund qua 2 chain | Không thêm agent thứ hai; nếu phần marketplace chưa ổn, pitch core dispute trung thực |
+| Ngày 4 | Test wrong proof, replay, double payout, roles và UX | Chỉ sửa blocker |
+| Ngày 5 | Freeze, video, slide, deploy manifests/receipts | Không nói tính năng chưa chạy đã chạy |
+
+**Đánh giá rủi ro:** 3 người/5 ngày là phạm vi tham vọng, nhất là với L1 + ICM + on-chain verifier + marketplace cùng lúc. Có kế hoạch dự phòng để bảo vệ giá trị phần kỹ thuật cốt lõi. “MVP” là mục tiêu cần nghiệm thu, không phải lời hứa tất cả chức năng chắc chắn hoàn thành.
+
+## 17. Hướng dẫn cấu hình và tài liệu tham khảo
+
+### 17.1. `.env.example` khuyến nghị
+
+```dotenv
+# PUBLIC CLIENT CONFIG - never put secret keys in NEXT_PUBLIC variables
+NEXT_PUBLIC_FUJI_RPC_URL=
+NEXT_PUBLIC_FUJI_CHAIN_ID=
+NEXT_PUBLIC_DISPUTE_L1_RPC_URL=
+NEXT_PUBLIC_DISPUTE_L1_CHAIN_ID=
+NEXT_PUBLIC_API_BASE_URL=
+
+# SERVER ONLY
+DATABASE_URL=
+ENCRYPTION_KEY=
+GEMINI_API_KEY=
+GROQ_API_KEY=
+FUJI_BLOCKCHAIN_ID=
+DISPUTE_L1_BLOCKCHAIN_ID=
+SERVICE_ORDER_MANAGER_ADDRESS=
+AGENT_REGISTRY_ADDRESS=
+SETTLEMENT_ESCROW_ADDRESS=
+DISPUTE_MANAGER_ADDRESS=
+PROOF_GATE_ADDRESS=
+# Only if a backend signer is necessary, with minimum roles; NEVER commit its value.
+PROOF_SUBMITTER_PRIVATE_KEY=
+```
+
+**Không điền key thật trong README, `.env.example`, GitHub Actions log hay public demo.** Mỗi thành viên có wallet/key riêng; staging sử dụng secret manager, không chia sẻ credentials của DB admin.
+
+### 17.2. Khi deploy xong, bổ sung bằng giá trị thật
+
+| Thông tin | Giá trị |
+|---|---|
+| Fuji C-Chain RPC / EVM chain ID | _Chưa điền — cập nhật từ môi trường deploy_ |
+| Dispute L1 RPC / EVM chain ID | _Chưa điền — cập nhật khi khởi tạo L1_ |
+| Fuji / Dispute L1 Avalanche blockchain IDs | _Chưa điền_ |
+| TeleporterMessenger / Registry | _Chưa điền, đối chiếu deploy thực tế_ |
+| AgentRegistry / ServiceOrderManager / Escrow addresses | _Chưa deploy hoặc chưa điền_ |
+| DisputeManager / ProofGate / Verifier addresses | _Chưa deploy hoặc chưa điền_ |
+| Proof verification tx / ICM message IDs / settlement tx | _Chưa có demo receipts_ |
+| Gas, proof time, service AI latency | _Chưa đo_ |
+
+### 17.3. Nguồn tài liệu kỹ thuật
+
+- [Avalanche Interchain Messaging — Academy](https://build.avax.network/academy/avalanche-l1/interchain-messaging)
+- [ICM Infrastructure Setup](https://build.avax.network/academy/avalanche-l1/interchain-messaging/04-icm-setup/01-overview)
+- [Relayer Setup — hosted relayer giới hạn 3 ngày](https://build.avax.network/academy/avalanche-l1/interchain-messaging/04-icm-setup/04-relayer-setup)
+- [Avalanche SDK — Interchain Messaging](https://build.avax.network/docs/tooling/avalanche-sdk/interchain/icm)
+- [Noir Documentation](https://noir-lang.org/docs/)
+- [Noir: Getting Started Manually (nargo + bb)](https://noir-lang.org/docs/getting_started_manually)
 
 ---
 
-## 18. Tài liệu chính thức và tham khảo kỹ thuật
-
-Dùng các tài liệu này làm điểm bắt đầu; hãy kiểm tra phiên bản hiện tại trước khi sao chép command hoặc deploy contract vì công cụ Avalanche và ZK toolchain có thể thay đổi.
-
-### Avalanche L1 và ICM
-
-- [Avalanche L1 — Create Your L1 (Builder Hub)](https://build.avax.network/academy/avalanche-l1/permissionless-l1s/04-speedrun-base-l1/01-create-l1-speedrun)
-- [Customize an Avalanche L1](https://build.avax.network/docs/avalanche-l1s/evm-configuration/customize-avalanche-l1)
-- [Avalanche L1 FAQ — validator considerations](https://support.avax.network/en/articles/6158840-l1-faq)
-- [ICM infrastructure overview](https://build.avax.network/academy/avalanche-l1/interchain-messaging/04-icm-setup/01-overview)
-- [Deploy Teleporter Messenger](https://docs.avax.network/academy/avalanche-l1/interchain-messaging/04-icm-setup/02-deploy-teleporter-messenger)
-- [Relayer setup](https://build.avax.network/academy/avalanche-l1/interchain-messaging/04-icm-setup/04-relayer-setup)
-- [Send a Teleporter message](https://build.avax.network/academy/avalanche-l1/interchain-messaging/03-icm-protocol/03-sending-a-message)
-- [Receive a Teleporter message](https://build.avax.network/academy/avalanche-l1/interchain-messaging/03-icm-protocol/04-receiving-a-message)
-- [Avalanche Interchain SDK](https://build.avax.network/docs/tooling/avalanche-sdk/interchain)
-
-### ZK
-
-- [Noir documentation](https://noir-lang.org/docs/)
-- [Noir — getting started manually](https://noir-lang.org/docs/getting_started_manually)
-- [Barretenberg — generate a Solidity verifier](https://barretenberg.aztec.network/docs/how_to_guides/how-to-solidity-verifier/)
-- [RISC Zero zkVM quick start](https://dev.risczero.com/zkvm/quickstart)
-- [RISC Zero zkVM overview](https://dev.risczero.com/api/zkvm)
-- [EZKL security notes](https://github.com/zkonduit/ezkl-docs)
-
----
-
-## Khuyến nghị cuối cùng
-
-Hãy xây dựng hệ thống theo thứ tự sau:
-
-**Custom L1 → một vòng Teleporter hai chiều → deploy thử Noir verifier (< 24KB) lên chính L1 → contract Escrow & `policyCommitment` → AI pipeline → Noir ZK policy proof → luồng Merchant/Arbitrator duyệt & giải ngân → hoàn thiện UI.**
-
-Thứ tự này được chọn có chủ đích để kiểm tra các tích hợp rủi ro nhất từ sớm. Một demo nhỏ hơn nhưng thực sự chạy được L1 + ICM + ZK sẽ thuyết phục hơn một kiến trúc rộng, trong đó chain, relayer, verifier và AI pipeline đều mới chỉ được triển khai một phần.
+**Kết luận:** Dự án P0 hiện tại là **1 AI Service Agent có giao dịch thật trên Avalanche + 3 Dispute Agents + Dispute Protocol bảo vệ điều khoản riêng tư**. Tranh chấp là **tính năng cốt lõi** khiến marketplace có cơ chế bảo đảm dịch vụ, không phải một ứng dụng độc lập ghép thêm. Sau hackathon, kiến trúc cho phép mở rộng thêm agents/providers mà không phải viết lại toàn bộ Dispute Protocol.
