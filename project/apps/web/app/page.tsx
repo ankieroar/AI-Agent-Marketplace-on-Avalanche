@@ -1,0 +1,7 @@
+'use client';
+import {useAccount,useConnect,useDisconnect,useSwitchChain} from 'wagmi';
+export default function Page(){
+ const {address,isConnected,chain}=useAccount(),{connect,connectors,error}=useConnect(),{disconnect}=useDisconnect(),{switchChain,error:switchError}=useSwitchChain();
+ return <main><p className="eyebrow">AVALANCHE / PRIVATE WARRANTY PROTOCOL</p><h1>Bảo hành minh bạch.<br/>Bằng chứng riêng tư.</h1><p className="intro">Nền tảng xử lý khiếu nại trên Fuji và Dispute L1. Khung kết nối ví cho bản thử nghiệm ngày 1.</p><section><h2>Kết nối mạng thử nghiệm</h2>{isConnected?<><p className="address">{address}</p><p>Mạng hiện tại: {chain?.name || 'Không hỗ trợ'}</p><button onClick={()=>disconnect()}>Ngắt kết nối</button></>:<button disabled={!connectors.length} onClick={()=>connect({connector:connectors[0]})}>Kết nối ví</button>}<div className="networks"><button disabled={!isConnected} onClick={()=>switchChain({chainId:43113})}>Fuji C-Chain · 43113</button><button disabled={!isConnected} onClick={()=>switchChain({chainId:662831})}>Dispute L1 · 662831</button></div><p role="alert">{error?.message || switchError?.message}</p></section><section><h2>Tiến trình tích hợp</h2><p>Kết nối ví → Schema hồ sơ → AI hỗ trợ → ZK xác minh → Người duyệt</p><p>Chưa mở chức năng gửi hồ sơ và giải ngân. Trạng thái Teleporter/verifier phải được kiểm chứng bằng giao dịch thực tế.</p></section></main>;
+}
+

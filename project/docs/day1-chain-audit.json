@@ -1,0 +1,25 @@
+{
+  "checkedAt": "2026-11-17T07:55:01.618Z",
+  "results": [
+    {
+      "name": "fuji",
+      "chainId": "43113",
+      "block": 61221751,
+      "wallet": "0x342482d83aB3E03745a96dc377aF806D19726Fa7",
+      "balance": "0.49986132984876112",
+      "messenger": "0x253b2784c75e510dD0fF1da844684a1aC0aa5fcf",
+      "codeBytes": 13013,
+      "codeHash": "0x06d9cee6b0c6a62fea8e5c54e0ceb754a763147be31dcb336187ab473398d6d1"
+    },
+    {
+      "name": "disputeL1",
+      "chainId": "662831",
+      "block": 4,
+      "wallet": "0x342482d83aB3E03745a96dc377aF806D19726Fa7",
+      "balance": "699999.999290723999290724",
+      "messenger": "0x253b2784c75e510dD0fF1da844684a1aC0aa5fcf",
+      "codeBytes": 12569,
+      "codeHash": "0xd7a22091cb2ecdf58918983466c39def0b54105e1bf487928dee0dd70765af65"
+    }
+  ]
+}

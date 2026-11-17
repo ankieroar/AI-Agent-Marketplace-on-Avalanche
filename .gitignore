@@ -30,6 +30,7 @@ venv/
 
 # Noir / ZK build outputs
 project/circuits/**/target/
+project/circuits/hello_world/target/
 
 # System and Editor files
 .DS_Store
@@ -43,3 +44,27 @@ Thumbs.db
 *.log
 tmp/
 temp/
+project/.tools/
+project/.next/
+*.tsbuildinfo
+
+# Private ZK inputs and generated proofs (commit only explicit sample templates)
+**/Prover.toml
+**/Verifier.toml
+*.witness
+*.proof
+**/proofs/
+**/witnesses/
+
+# Credentials, DB dumps and private evidence
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+secrets/
+**/uploads/
+**/private-data/
+**/pgdata/
+*.dump
+*.sql.gz

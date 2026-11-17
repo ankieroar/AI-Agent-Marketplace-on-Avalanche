@@ -1,0 +1,24 @@
+{
+  "name": "private-warranty",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/agents"
+  ],
+  "scripts": {
+    "test": "node --test tests/core.test.mjs",
+    "dev:api": "npm run dev -w @warranty/api",
+    "dev:web": "npm run dev -w @warranty/web",
+    "build:web": "npm run build -w @warranty/web"
+  },
+  "dependencies": {
+    "ethers": "^6.17.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "^3.25.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "networkName": "Dispute L1",
+  "network": "fuji",
+  "rpcUrl": "https://managed-nodes.avax.network/ext/bc/CnnZk7teddWLgqy2BD74T6TDUD6oJJVR3DtZTAspXSDd2xCvz/rpc",
+  "evmChainId": 662831,
+  "blockchainId": "CnnZk7teddWLgqy2BD74T6TDUD6oJJVR3DtZTAspXSDd2xCvz",
+  "blockchainIdBytes32": "0x1ac4f03783f66f0733d25e7b8df833da1d739e7b20404cd2cfd867bf1d270539",
+  "subnetId": "2uZ9urRdTwnu1LRQtizioDZQj2pvQGpd7NpZPT3WoDWD3PWDio",
+  "gasToken": "DISP",
+  "nodeIds": ["NodeID-Fvet9DW7LD65DL8ek1de49xBXUiJJgEt4"],
+  "nodeIdEvidence": "platform.getCurrentValidators on Fuji P-Chain, 2026-11-17",
+  "permissionedStatus": "Requires operator confirmation; repository genesis is not proof of deployed configuration"
+}
