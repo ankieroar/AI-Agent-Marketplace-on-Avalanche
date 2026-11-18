@@ -1,5 +1,7 @@
 # Avalanche Private Warranty & Dispute Protocol
 
+[Demo Day 2 · Marketplace, API và ZK](README-DAY2.md)
+
 Hướng dẫn triển khai ngày 1 mới: [README-DAY1.md](README-DAY1.md). Kết quả và các điều kiện chưa hoàn thành: [DAY1-REPORT.md](docs/DAY1-REPORT.md).
 
 Protocol xử lý khiếu nại và bảo hành bảo vệ quyền riêng tư trên Avalanche (Dual-Chain: Fuji C-Chain + Custom Dispute L1).

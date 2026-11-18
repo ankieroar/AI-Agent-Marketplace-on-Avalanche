@@ -8,6 +8,34 @@ export function policyCommitment(input) {
  return keccak256(AbiCoder.defaultAbiCoder().encode(['string','uint256','uint256','uint256','bytes32'],['warranty.policy.v1',p.purchaseTimestamp,p.warrantyEndTimestamp,p.maxPayout,p.nonce]));
 }
 export const caseMessageSchema=z.object({version:z.literal(1),caseId:bytes32,policyCommitment:bytes32,claimTimestamp:uint,policyVersionHash:bytes32,sourceBlockchainId:bytes32,nonce:uint}).strict();
+const uint64 = uint.refine(value => BigInt(value) < 2n ** 64n);
+export const day2CaseMessageSchema = z.object({
+  caseId: bytes32,
+  orderId: bytes32,
+  policyCommitment: bytes32,
+  claimTimestamp: uint64,
+  policyVersionHash: bytes32,
+  sourceBlockchainId: bytes32,
+  nonce: uint,
+  lockedAmount: uint,
+  purchaseTimestamp: uint64,
+  claimDeadline: uint64,
+}).strict();
+export const day2ResolutionMessageSchema = z.object({
+  caseId: bytes32,
+  orderId: bytes32,
+  outcomeCode: z.union([z.literal(1), z.literal(2)]),
+  payoutAmount: uint,
+  reviewerApprovalRef: bytes32,
+  proofRef: bytes32,
+  nonce: uint,
+}).strict();
+export const summaryInputSchema = z.object({text:z.string().trim().min(1).max(12000)}).strict();
+export const summarySchema = z.object({
+  summary:z.string().trim().min(1).max(2000),
+  keyPoints:z.array(z.string().trim().min(1).max(500)).min(1).max(8),
+  caveats:z.array(z.string().trim().min(1).max(500)).max(8),
+}).strict();
 export const evidenceSchema=z.object({purchaseDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),faultDescription:z.string().max(2000),missingEvidence:z.array(z.string()).max(20)}).strict();
 export const policyResultSchema=z.object({eligible:z.boolean(),reasons:z.array(z.string()).max(20)}).strict();
 export const resolutionSchema=z.object({proposedPayout:uint,reason:z.string().max(2000),requiresHumanReview:z.literal(true)}).strict();

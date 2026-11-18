@@ -16,6 +16,10 @@ module.exports = {
     },
   },
   networks: {
+    localhost: {
+      url: process.env.DAY2_RPC_URL || "http://127.0.0.1:8545",
+      chainId: 31337,
+    },
     fuji: {
       url: process.env.FUJI_RPC_URL || "https://api.avax-test.network/ext/bc/C/rpc",
       chainId: 43113,

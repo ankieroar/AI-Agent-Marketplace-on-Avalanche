@@ -27,7 +27,7 @@ test('three-agent pipeline validates JSON and payout limits',async()=>{
  outputs[2].proposedPayout='101';calls=0;
  await assert.rejects(runPipeline({text:'broken',policy,claimTimestamp:'5'},{fetchImpl}),/exceeds/);
  await assert.rejects(callAgent('evidence',{},evidenceSchema,{fetchImpl:async()=>({ok:true,json:async()=>({choices:[{message:{content:'not json'}}]})})}));
- await assert.rejects(callAgent('evidence',{},evidenceSchema,{fetchImpl:async()=>({ok:false,status:429})}),/no paid fallback/);
+ await assert.rejects(callAgent('evidence',{},evidenceSchema,{fetchImpl:async()=>({ok:false,status:429})}),{status:429});
  delete process.env.OPENROUTER_API_KEY;
 });
 

@@ -1,0 +1,18 @@
+.workspace {max-width:1100px;margin:auto;padding:2.5rem 1.25rem;}
+.workspace header {margin:2rem 0;}
+.workspace h1 {font-size:clamp(2rem,5vw,4rem);margin:.45rem 0 1rem;}
+.workspace a {color:#83e8cc;}
+.grid {display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:1rem;}
+.panel {padding:1.15rem;margin:1rem 0;border:1px solid #315050;border-radius:14px;background:#151e23;}
+.actions {display:flex;gap:.5rem;flex-wrap:wrap;margin:.8rem 0;}
+.workspace button[aria-pressed=true] {outline:2px solid #83e8cc;}
+.workspace label {display:block;margin:.9rem 0 .3rem;}
+.workspace textarea,.workspace input {width:100%;padding:.65rem;color:#f0fafa;background:#10181f;border:1px solid #426063;border-radius:7px;}
+.workspace li {margin:.55rem 0;}
+.workspace dl {margin:.9rem 0;}
+.workspace dt {font-weight:bold;text-transform:capitalize;}
+.workspace dd {margin:.2rem 0 .65rem;}
+.note {color:#a9c0c2;}
+.status {color:#83e8cc;font-weight:bold;}
+.mono {font-family:monospace;overflow-wrap:anywhere;}
+@media(max-width:740px){.grid{grid-template-columns:1fr;}}
