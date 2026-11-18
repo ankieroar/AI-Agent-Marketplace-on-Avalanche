@@ -6,53 +6,114 @@
 | Xác thực ví buyer và chạy agent cho order đã thanh toán trên Hardhat | Hardhat node, PostgreSQL, API và Next.js |
 | Xác minh proof policy thật, xem bytecode hoặc duyệt dispute bằng proof thật | Noir beta.3, Barretenberg WASM và Hardhat |
 
-Các lệnh PowerShell dưới đây chạy từ `project` trừ khi ghi rõ. Trên Linux/macOS dùng `npm` và `npx` thay `npm.cmd` và `npx.cmd`.
+Các lệnh dưới đây dùng PowerShell và đường dẫn repo trên máy hiện tại. Nếu clone ở thư mục khác, thay `D:\26120200\team1_vietnam_unihack` bằng đường dẫn repo của bạn. Trên Linux/macOS dùng `npm` và `npx` thay `npm.cmd` và `npx.cmd`.
 
-Nếu vừa clone repo, dùng Node.js 22 rồi chạy `npm.cmd ci` trong `project` và `npm.cmd ci --workspaces=false` trong `project/contracts`.
+### Cài dependencies một lần nếu vừa clone
 
-## 1. Xem giao diện ngay
+Dùng Node.js 22. Cả hai cách demo cần dependencies trong `project`. Cách 2 cần thêm dependencies trong `project/contracts`.
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
+npm.cmd ci
+
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
+npm.cmd ci --workspaces=false
+```
+
+## Cách 1. Chỉ chạy frontend để demo giả lập
+
+Cách này chỉ cần một terminal. Có thể tắt Docker và Hardhat; không cần kết nối ví hay cài API key.
+
+```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
 npm.cmd run dev:web
 ```
 
-Mở [http://localhost:3000/day2](http://localhost:3000/day2). Chọn **Demo giả lập → Xem chi tiết → Mua dịch vụ → Chạy agent**. Chọn **Chấp nhận** để thử trả seller. Tạo order mới để thử **Mở tranh chấp → Phân tích → Duyệt hoàn tiền** hoặc **Từ chối** trong màn hình reviewer. Timeline hiển thị các bước vừa thực hiện. Chế độ này dùng dữ liệu trong trình duyệt nên chạy được khi Docker tắt.
+Giữ terminal mở. Khi Next.js báo `Ready`, mở [http://localhost:3000/day2](http://localhost:3000/day2) bằng Chrome. Nếu Next.js in cổng khác ở dòng `Local`, dùng cổng đó và thêm `/day2`.
 
-## 2. Test API, PostgreSQL và order Hardhat thật
+1. Chọn **Demo giả lập → Xem chi tiết → Mua dịch vụ → Chạy agent**.
+2. Chọn **Chấp nhận** để xem luồng trả tiền cho seller.
+3. Tạo order mới, chạy lại agent rồi chọn **Mở tranh chấp → Phân tích → Duyệt hoàn tiền** hoặc **Từ chối**. Xem các bước trong **Timeline**.
 
-Nếu chưa có `.env` local, chạy `node apps/api/src/setup-env.mjs`. Nếu đã làm Day 1, dùng lại `.env` và volume PostgreSQL.
+## Cách 2. Chạy đầy đủ Docker, Hardhat, backend và frontend
+
+Docker chạy PostgreSQL. Hardhat chạy chain local, còn API và Next.js chạy trong terminal riêng. Order được ghi trên Hardhat và kết quả được lưu trong PostgreSQL. Phần AI dùng mock ở các bước mặc định bên dưới.
+
+### Terminal 1. Khởi động PostgreSQL và chạy migration
+
+Mở Docker Desktop và đợi Docker chạy. Nếu đã thiết lập Day 1, dùng lại `.env` và volume PostgreSQL.
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
+if (!(Test-Path .env)) { node apps/api/src/setup-env.mjs }
 docker compose up -d postgres
+docker compose ps
 npm.cmd run migrate -w @warranty/api
 ```
 
-Mở một terminal trong `project/contracts` và giữ node chạy:
+Kết quả mong đợi là container PostgreSQL đang chạy và terminal in `Migrations complete`. Nếu migration báo chưa kết nối được, đợi PostgreSQL khởi động rồi chạy lại lệnh migration.
+
+Nếu Docker báo `no configuration file provided: not found`, quay về thư mục `project` bằng lệnh `cd` ở trên rồi kiểm tra `Get-Item .\compose.yaml`. Docker Compose cần file này để tìm service `postgres`.
+
+### Terminal 2. Mở Hardhat node
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
 npx.cmd hardhat node
 ```
 
-Ở terminal thứ hai, vẫn trong `project/contracts`:
+Giữ terminal này mở. RPC local là `http://127.0.0.1:8545`, chain ID `31337`.
+
+### Terminal 1. Deploy contract và tạo order demo
+
+Sau khi Hardhat đã khởi động, quay lại terminal 1:
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
 npx.cmd hardhat run scripts/day2-prepare-api.js --network localhost
 ```
 
-Script dùng tài khoản test Hardhat để tạo một order `PAID` và một case `DISPUTED`. Nó in `paid`, `caseId`, `buyer` và cập nhật ABI/địa chỉ trong `.runtime/day2/day2-local.json`. Mỗi lần chạy tạo fixture mới.
+Copy giá trị **`paid`** để dán vào giao diện. Script cũng in `buyer`, `disputed` và `caseId`. File địa chỉ và ABI nằm trong `project/.runtime/day2/day2-local.json`. Nếu tắt và bật lại Hardhat, chạy lại lệnh deploy và sử dụng `paid` mới.
 
-Từ `project`, chạy API ở terminal riêng. Để test offline, đặt chế độ AI mock trước:
+### Terminal 3. Chạy backend
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
 $env:DAY2_AI_MODE = 'mock'
 npm.cmd run dev:api
 ```
 
-Mở [http://127.0.0.1:3001/health](http://127.0.0.1:3001/health) để thấy `{"database":"ready"}`. Sau khi mở web, chọn **API local**, dán ID `paid`, bấm **Kiểm tra order**. Để chạy agent qua trình duyệt, dùng ví test riêng, chọn/tạo mạng Hardhat Local (`http://127.0.0.1:8545`, chain ID `31337`) và nhập tài khoản Hardhat có địa chỉ trùng `buyer`. Chỉ dùng key Hardhat mặc định trên local. Bấm **Ký và chạy agent**, xác nhận chữ ký và xem kết quả. `mock` hiển thị kết quả mẫu và vẫn thực thi kiểm tra buyer, trạng thái thanh toán và ghi PostgreSQL thật.
+Giữ terminal mở. Mở [http://127.0.0.1:3001/health](http://127.0.0.1:3001/health) để kiểm tra `{"database":"ready"}`.
 
-Để kiểm thử giao diện và API độc lập, có thể bỏ bước import ví và chạy lệnh sau từ `project`. Script ký qua tài khoản Hardhat đã mở khóa và kiểm tra cả trường hợp sai ví, order đang dispute, chạy lại và upload bằng chứng mã hóa:
+### Terminal 4. Chạy frontend
+
+Nếu frontend ở Cách 1 vẫn chạy, dùng lại trang đó. Nếu chưa chạy, mở terminal mới:
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
+npm.cmd run dev:web
+```
+
+Nếu cổng `3000` bị chiếm hoặc tải không được, dừng tiến trình web đang lỗi bằng Ctrl+C trong terminal của nó rồi thử lệnh sau từ cùng thư mục `project`:
+
+```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
+npm.cmd run dev -w @warranty/web -- --turbopack --port 3004
+```
+
+### Kiểm tra từ Chrome
+
+1. Mở [http://localhost:3000/day2](http://localhost:3000/day2), hoặc [http://localhost:3004/day2](http://localhost:3004/day2) nếu chạy bằng cổng dự phòng. Dùng Chrome có extension Core hoặc MetaMask. Trình duyệt nhúng VS Code không dùng được extension ví của Chrome.
+2. Chọn **API local**, dán giá trị `paid` từ terminal 1, rồi bấm **Kiểm tra order**. Order mới sẽ hiện **PAID**. Bước này chưa cần ví.
+3. Để thử ký, dùng ví test trên **Hardhat Local** với RPC `http://127.0.0.1:8545`, chain ID `31337`. Trong terminal Hardhat, tìm tài khoản mặc định **Account #2** (`0x3C44…93BC`), đối chiếu với `buyer` rồi import tài khoản test vào ví. Chỉ dùng key Hardhat mặc định trên local.
+4. Bấm **Kết nối ví buyer**, chọn đúng địa chỉ `buyer`, giữ văn bản mẫu và bấm **Ký và chạy agent**. Core hoặc MetaMask sẽ yêu cầu ký thông điệp. Kết quả tóm tắt và chế độ `mock` sẽ hiện trên trang.
+
+### Kiểm tra backend không cần ví trình duyệt
+
+Chạy trong terminal trống từ `project` sau khi Hardhat, PostgreSQL và API đã sẵn sàng. Dùng fixture mới nếu order đã được chạy với văn bản khác. Script dùng tài khoản Hardhat để kiểm tra đúng/sai buyer, order đang dispute, chạy lại và upload bằng chứng mã hóa.
+
+```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
 node --env-file=.env tests/day2-api-smoke.mjs
 ```
 
@@ -63,6 +124,7 @@ Chạy fixture mới trước khi chuyển một order đã có kết quả từ
 Đặt `OPENROUTER_API_KEY` trong `project/.env`. Dùng `OPENROUTER_MODEL=openrouter/free` hoặc một model có hậu tố `:free`. Adapter chỉ gửi yêu cầu giá bằng 0, có thể trả lỗi quota nếu model miễn phí hết lượt. Dùng tài liệu và hóa đơn giả lập để demo. [OpenRouter Free Models](https://openrouter.ai/collections/free-models/)
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
 node --env-file=.env tests/day2-ai-live.mjs
 node --env-file=.env tests/day2-ai-live.mjs --pipeline
 ```
@@ -78,6 +140,7 @@ Nếu chưa có Noir beta.3 trong `.tools/noir` và dependencies của prover, l
 Với checkout mới trên Windows, có thể cài Nargo cho Docker và dependencies của prover từ `project`:
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
 New-Item -ItemType Directory -Force .tools/noir | Out-Null
 Invoke-WebRequest https://github.com/noir-lang/noir/releases/download/v1.0.0-beta.3/nargo-x86_64-unknown-linux-gnu.tar.gz -OutFile .tools/noir.tar.gz
 tar -xzf .tools/noir.tar.gz -C .tools/noir
@@ -85,6 +148,7 @@ npm.cmd ci --prefix services/prover --workspaces=false
 ```
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
 node services/prover/day2.mjs
 cd contracts
 npx.cmd hardhat test
@@ -97,6 +161,7 @@ Kết quả mong đợi gồm từ chối claim quá hạn, refund vượt trầ
 Giữ node và fixture ở mục 2. Từ `project`:
 
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
 $fixture = Get-Content .runtime/day2/day2-api-fixture.json -Raw | ConvertFrom-Json
 $proof = node --env-file=.env apps/api/src/prove-case.mjs $fixture.caseId 5000000000000000 .runtime/day2/day2-mock-policy.json
 if ($LASTEXITCODE -ne 0) { throw 'Tạo proof thất bại' }

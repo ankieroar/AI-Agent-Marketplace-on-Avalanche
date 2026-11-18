@@ -19,12 +19,20 @@ Bằng chứng và hash giao dịch: [DAY1-REPORT.md](docs/DAY1-REPORT.md), [icm
 
 ## Cài đặt monorepo
 
-Từ thư mục `project`, dùng Node 22 LTS để tránh cảnh báo engine từ dependency ví:
+Dùng Node.js 22 LTS. Các lệnh PowerShell dùng đường dẫn repo trên máy hiện tại. Nếu clone ở nơi khác, thay tiền tố `D:\26120200\team1_vietnam_unihack` bằng đường dẫn repo của bạn.
 
 ```powershell
-npm ci
+cd 'D:\26120200\team1_vietnam_unihack\project'
+npm.cmd ci
 node apps/api/src/setup-env.mjs
-npm test
+npm.cmd test
+```
+
+Nếu lần đầu chạy Hardhat, cài dependencies riêng của contract:
+
+```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
+npm.cmd ci --workspaces=false
 ```
 
 Script setup chỉ bổ sung secret ngẫu nhiên chưa tồn tại trong `.env`, không in giá trị. Không commit `.env`. API_ACCESS_TOKEN là token phát triển dùng chung cho backend cục bộ, chưa thay thế xác thực người dùng/ủy quyền từng hồ sơ.
@@ -35,12 +43,30 @@ Kế hoạch sản phẩm đã đổi sang curated marketplace: xem [PLAN-UPDATE
 
 Docker Desktop phải đang chạy. Docker Desktop có điều kiện license theo tổ chức; PostgreSQL có PostgreSQL License. Không dùng DB cloud trả phí.
 
+**Terminal 1. Khởi động PostgreSQL rồi chạy migration và smoke test.** Docker Compose đọc `project/compose.yaml` và `project/.env` từ thư mục này.
+
 ```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
 docker compose up -d postgres
-npm run migrate -w @warranty/api
+docker compose ps
+npm.cmd run migrate -w @warranty/api
 node --env-file=.env tests/storage-smoke.mjs
 node --env-file=.env tests/api-smoke.mjs
-npm run dev:api
+```
+
+Nếu gặp `no configuration file provided: not found`, chạy lại lệnh `cd` trong khối trên rồi kiểm tra `Get-Item .\compose.yaml`. Nếu PostgreSQL vừa khởi động và chưa nhận kết nối, đợi container sẵn sàng rồi chạy lại migration.
+
+Nếu muốn bật PostgreSQL từ thư mục khác, chỉ rõ file cấu hình:
+
+```powershell
+docker compose --env-file 'D:\26120200\team1_vietnam_unihack\project\.env' -f 'D:\26120200\team1_vietnam_unihack\project\compose.yaml' up -d postgres
+```
+
+**Terminal 2. Bật API và giữ terminal này mở.**
+
+```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
+npm.cmd run dev:api
 ```
 
 `GET http://127.0.0.1:3001/health` trả 200 khi DB sẵn sàng, 503 khi chưa kết nối. Các route còn lại yêu cầu `Authorization: Bearer <API_ACCESS_TOKEN>`.
@@ -59,30 +85,46 @@ Tài liệu: https://openrouter.ai/collections/free-models/ . Quota miễn phí 
 
 ## DApp
 
+**Terminal riêng. Chạy web để xem giao diện.**
+
 ```powershell
-npm run dev:web
-npm run build:web
+cd 'D:\26120200\team1_vietnam_unihack\project'
+npm.cmd run dev:web
 ```
 
-Mở localhost:3000, kết nối ví extension, chuyển Fuji 43113 hoặc Dispute L1 662831. Không cần WalletConnect key trả phí. Khung UI chưa mở case/giải ngân vì core contracts thuộc bước sau.
+Mở [http://localhost:3000](http://localhost:3000) bằng Chrome có Core hoặc MetaMask. Nếu Next.js hiển thị cổng khác, dùng địa chỉ ở dòng `Local`. Trang Day 1 cho kết nối ví và chuyển Fuji `43113` hoặc Dispute L1 `662831`. Luồng Marketplace nằm trong [README Day 2](README-DAY2.md).
+
+**Kiểm tra production build.** Dừng web dev bằng Ctrl+C trước để hai lệnh dùng thư mục build lần lượt:
+
+```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project'
+npm.cmd run build:web
+```
 
 ## Noir hello-world (Windows và Linux)
 
 Circuit `circuits/hello_world` chứng minh `x + y = z`, trong đó x,y private và z public. Kết quả đã chạy thành công trên Windows với Docker.
 
-**Windows PowerShell** — từ thư mục `project`:
+**Windows PowerShell.** Mở Docker Desktop. Nếu chưa có Nargo beta.3, tải bản Linux để container chạy, sau đó chạy prover:
 
 ```powershell
-cd services/prover
-npm ci --workspaces=false
-npm run day1
+cd 'D:\26120200\team1_vietnam_unihack\project'
+if (!(Test-Path '.tools/noir/nargo')) {
+    New-Item -ItemType Directory -Force .tools/noir | Out-Null
+    Invoke-WebRequest 'https://github.com/noir-lang/noir/releases/download/v1.0.0-beta.3/nargo-x86_64-unknown-linux-gnu.tar.gz' -OutFile .tools/noir.tar.gz
+    tar -xzf .tools/noir.tar.gz -C .tools/noir
+}
+cd 'D:\26120200\team1_vietnam_unihack\project\services\prover'
+npm.cmd ci --workspaces=false
+npm.cmd run day1
 ```
 
 Docker Desktop cần đang chạy; `prepare-circuit.mjs` gọi Nargo beta.3 bên trong Docker. Sau đó Barretenberg WASM chạy bằng Node trên Windows. `.tools/noir` được mount vào container, không cần cài Linux/WSL riêng.
 
-**Linux hoặc WSL** — từ thư mục `project`:
+**Linux hoặc WSL.** Ví dụ dưới đây dùng đường dẫn ổ D trên WSL. Nếu dùng Linux, thay đường dẫn `cd` bằng thư mục `project` trong bản clone:
 
 ```bash
+cd /mnt/d/26120200/team1_vietnam_unihack/project
 bash services/prover/day1.sh
 ```
 
@@ -92,12 +134,19 @@ Script cài Nargo v1.0.0-beta.3 vào `.tools` nếu chưa có, chạy hai circui
 
 Lệnh hoàn tất sẽ in `Valid proof accepted`, `wrongPublicInputRejected: true`, kích thước proof và verifier. Verifier Solidity sinh ra là Apache-2.0; thư viện WASM MIT, license được lưu cạnh verifier. Circuit này chỉ là hello-world, chưa chứng minh policy/refund của marketplace.
 
-**Kiểm tra kích thước và deploy verifier** — sau `npm run day1`, từ `project/contracts`:
+**Kiểm tra kích thước verifier local** sau khi sinh proof thành công:
 
 ```powershell
-cd contracts
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
 node scripts/verifier-size.js
-npx hardhat run scripts/deploy-verifier.js --network disputeL1
+```
+
+**Deploy và kiểm tra trên Dispute L1 (tùy chọn).** Hai lệnh dưới đây có thể gửi giao dịch. Cần cấu hình RPC và ví testnet có gas trong `project/.env`.
+
+```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
+npx.cmd hardhat run scripts/deploy-verifier.js --network disputeL1
+npx.cmd hardhat run scripts/verify-proof.js --network disputeL1
 ```
 
 `verifier-size.js` báo kích thước deployed bytecode và chặn nếu vượt 24,576 bytes. `deploy-verifier.js` deploy/reuse verifier có bytecode trùng; `verify-proof.js` kiểm tra proof đúng, proof bị sửa và giao dịch verify trên L1. Bằng chứng giao dịch đã chạy được lưu ở `docs/verifier-deployment.json` và `docs/zk-l1-verification.json`.
@@ -111,10 +160,10 @@ Messenger là transport ICM/Warp. App V2 `PingSenderV2`/`PongReceiverV2` xử l�
 Các lệnh này kiểm tra contracts cũ (`TeleporterPingPong`), test, audit cấu hình chain và thử vòng đời relayer đời đầu:
 
 ```powershell
-cd D:\26120200\team1_vietnam_unihack\project\contracts
-npx hardhat test
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
+npx.cmd hardhat test
 node scripts/audit-day1.js
-npx hardhat run scripts/icm-roundtrip.js
+npx.cmd hardhat run scripts/icm-roundtrip.js
 ```
 
 `npx hardhat test` chỉ chạy local unit tests. `audit-day1.js` là audit RPC/config, không gửi ping. `icm-roundtrip.js` là script cũ; nó dùng `.env` và Fuji test token, có thể gửi giao dịch. Kết quả của nó được lưu ở `docs/icm-roundtrip.json`. Đó là một bộ triển khai tách biệt với V2 bên dưới; đừng dùng snapshot cũ trong `icm-roundtrip.json` để kết luận trạng thái V2 mới nhất.
@@ -130,15 +179,22 @@ npx hardhat run scripts/icm-roundtrip.js
 
 Round V2 đã kiểm chứng: Fuji ping `0x74bf09996e74516b40f070d0a5f6637f0a330fb7c54af973244f4085368f9747`; L1 receive và tự phát pong `0x8f3e621b98c0acd319a353698c88c44e06cac1d7ea47e4160749198d3dd96722`. L1 Messenger và app đã nhận. Pong chưa nhận tại Fuji; `icm:check` hiện dự kiến cho `fujiMessengerReceived=false`, `fujiApplicationCompleted=false`.
 
-Để theo dõi round đã gửi mà không phát thêm giao dịch, dùng:
+Để chỉ đọc trạng thái round đã gửi:
 
 ```powershell
-npm run icm:check
-npm run icm:roundtrip:api
-npm run icm:check
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
+npm.cmd run icm:check
 ```
 
-Lệnh giữa có thể gửi delivery transaction cho round pending nhưng không tạo ping thứ hai khi round hiện tại còn pending. Chỉ kết luận thông hai chiều khi audit xác nhận `fujiMessengerReceived=true` **và** `fujiApplicationCompleted=true`, đồng thời có receipt/event trên Fuji. Xem [README-ICM-SELFHOST.md](README-ICM-SELFHOST.md) và [DAY1-LATEST-STATUS.md](docs/DAY1-LATEST-STATUS.md) để biết nguyên nhân blocker validator. Legacy `fallback-relayer.js` không chứng minh ICM/Warp thật.
+Để thử relay bằng API, dùng cùng thư mục `contracts`. Lệnh này có thể gửi giao dịch delivery hoặc tạo ping nếu chưa có round chờ.
+
+```powershell
+cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
+npm.cmd run icm:roundtrip:api
+npm.cmd run icm:check
+```
+
+Chỉ kết luận thông hai chiều khi audit xác nhận `fujiMessengerReceived=true` **và** `fujiApplicationCompleted=true`, đồng thời có receipt/event trên Fuji. Xem [README-ICM-SELFHOST.md](README-ICM-SELFHOST.md) và [DAY1-LATEST-STATUS.md](docs/DAY1-LATEST-STATUS.md) để biết nguyên nhân blocker validator. Legacy `fallback-relayer.js` không chứng minh ICM/Warp thật.
 
 ## Cấu trúc
 
