@@ -10,7 +10,7 @@ Các lệnh dưới đây dùng PowerShell và đường dẫn repo trên máy h
 
 ### Cài dependencies một lần nếu vừa clone
 
-Dùng Node.js 22. Cả hai cách demo cần dependencies trong `project`. Cách 2 cần thêm dependencies trong `project/contracts`.
+Dùng Node.js 22. Cả hai mục demo cần dependencies trong `project`. Mục 2 cần thêm dependencies trong `project/contracts`.
 
 ```powershell
 cd 'D:\26120200\team1_vietnam_unihack\project'
@@ -20,7 +20,7 @@ cd 'D:\26120200\team1_vietnam_unihack\project\contracts'
 npm.cmd ci --workspaces=false
 ```
 
-## Cách 1. Chỉ chạy frontend để demo giả lập
+## 1. Xem giao diện
 
 Cách này chỉ cần một terminal. Có thể tắt Docker và Hardhat; không cần kết nối ví hay cài API key.
 
@@ -35,7 +35,7 @@ Giữ terminal mở. Khi Next.js báo `Ready`, mở [http://localhost:3000/day2]
 2. Chọn **Chấp nhận** để xem luồng trả tiền cho seller.
 3. Tạo order mới, chạy lại agent rồi chọn **Mở tranh chấp → Phân tích → Duyệt hoàn tiền** hoặc **Từ chối**. Xem các bước trong **Timeline**.
 
-## Cách 2. Chạy đầy đủ Docker, Hardhat, backend và frontend
+## 2. Test API, PostgreSQL và order Hardhat thật
 
 Docker chạy PostgreSQL. Hardhat chạy chain local, còn API và Next.js chạy trong terminal riêng. Order được ghi trên Hardhat và kết quả được lưu trong PostgreSQL. Phần AI dùng mock ở các bước mặc định bên dưới.
 
@@ -87,7 +87,7 @@ Giữ terminal mở. Mở [http://127.0.0.1:3001/health](http://127.0.0.1:3001/h
 
 ### Terminal 4. Chạy frontend
 
-Nếu frontend ở Cách 1 vẫn chạy, dùng lại trang đó. Nếu chưa chạy, mở terminal mới:
+Nếu frontend ở Mục 1 vẫn chạy, dùng lại trang đó. Nếu chưa chạy, mở terminal mới:
 
 ```powershell
 cd 'D:\26120200\team1_vietnam_unihack\project'
