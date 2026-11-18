@@ -15,4 +15,6 @@
 .note {color:#a9c0c2;}
 .status {color:#83e8cc;font-weight:bold;}
 .mono {font-family:monospace;overflow-wrap:anywhere;}
+.chatLog {max-height:24rem;overflow:auto;padding:.5rem .8rem;background:#10181f;border-radius:8px;}
+.chatLog p {white-space:pre-wrap;overflow-wrap:anywhere;}
 @media(max-width:740px){.grid{grid-template-columns:1fr;}}

@@ -17,6 +17,7 @@ project/contracts/typechain-types/
 
 # Next.js / Web build outputs
 .next/
+.next-backup-*/
 out/
 build/
 dist/

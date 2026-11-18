@@ -5,11 +5,14 @@ import express from 'express';
 import { pool } from './db.mjs';
 import { encrypt, decrypt } from './crypto.mjs';
 import { ApiError, day2Chain } from './day2-chain.mjs';
-import { mockSummary, summarizeDocument } from '@warranty/agents';
+import { chatWithModel, mockSummary, summarizeDocument } from '@warranty/agents';
 import { summaryInputSchema } from '@warranty/schema';
 
 const hexId = z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform(s=>s.toLowerCase());
 const evidenceInput = z.object({caseId:hexId,text:z.string().trim().min(1).max(30000)}).strict();
+const chatInput = z.object({messages:z.array(z.object({
+  role:z.enum(['user','assistant']),content:z.string().trim().min(1).max(4000),
+}).strict()).min(1).max(12)}).strict();
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const wrap = handler => (req,res,next) => Promise.resolve(handler(req,res)).catch(next);
 const buckets = new Map();
@@ -47,6 +50,12 @@ async function saveOrder(order) {
 }
 
 export const day2Routes = express.Router();
+day2Routes.post('/chat',wrap(async(req,res)=>{
+  const body=chatInput.parse(req.body);
+  const owner=req.ip || 'local';
+  rateLimit(owner,'chat');
+  res.json(await chatWithModel(body));
+}));
 day2Routes.get('/agents',wrap(async (req,res)=>{
   const chain = await day2Chain();
   const listings = await chain.agents();

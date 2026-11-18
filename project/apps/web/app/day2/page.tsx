@@ -86,6 +86,44 @@ function ConnectedExecution() {
   </section>;
 }
 
+type ChatMessage = {role:'user'|'assistant';content:string};
+function AiChat() {
+  const [messages,setMessages]=useState<ChatMessage[]>([]);
+  const [question,setQuestion]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  async function send() {
+    const content=question.trim();
+    if(!content||busy)return;
+    const next=[...messages,{role:'user' as const,content}];
+    setMessages(next);setQuestion('');setBusy(true);setError('');
+    try {
+      const response=await fetch('/api/day2/chat',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:next.slice(-12)})});
+      const data=await response.json();
+      if(!response.ok) throw new Error(data.error || 'Không gọi được AI.');
+      setMessages([...next,{role:'assistant',content:data.reply}]);
+    } catch(e) {
+      setError(e instanceof Error?e.message:'Không kết nối được backend.');
+    } finally {setBusy(false);}
+  }
+  return <section className={styles.panel}>
+    <h2>Chat với AI</h2>
+    <p>Dùng OpenRouter Free qua backend. Không cần ví. API key được giữ ở server.</p>
+    <div className={styles.chatLog} aria-live="polite">
+      {!messages.length&&<p>Hỏi AI điều bạn muốn biết.</p>}
+      {messages.map((message,index)=><p key={index}><strong>{message.role==='user'?'Bạn':'AI'}:</strong> {message.content}</p>)}
+      {busy&&<p>AI đang trả lời…</p>}
+    </div>
+    <label htmlFor="chat-question">Tin nhắn</label>
+    <textarea id="chat-question" rows={3} maxLength={4000} value={question}
+      onChange={event=>setQuestion(event.target.value)}
+      onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();void send();}}}/>
+    <button disabled={busy||!question.trim()} onClick={()=>void send()}>Gửi</button>
+    {error&&<p role="alert">{error}</p>}
+  </section>;
+}
+
 export default function Day2() {
   const [details,setDetails]=useState(false);
   const [mode,setMode]=useState<'demo'|'api'>('demo');
@@ -113,6 +151,7 @@ export default function Day2() {
       <button aria-pressed={mode==='demo'} onClick={()=>setMode('demo')}>Demo giả lập</button>
       <button aria-pressed={mode==='api'} onClick={()=>setMode('api')}>API local</button>
     </div>
+    <AiChat/>
     {mode==='api'?<ConnectedExecution/>:<div className={styles.grid}>
       <div>
         <section className={styles.panel}><h2>Danh sách agent</h2>

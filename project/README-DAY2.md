@@ -123,6 +123,8 @@ Chạy fixture mới trước khi chuyển một order đã có kết quả từ
 
 Đặt `OPENROUTER_API_KEY` trong `project/.env`. Dùng `OPENROUTER_MODEL=openrouter/free` hoặc một model có hậu tố `:free`. Adapter chỉ gửi yêu cầu giá bằng 0, có thể trả lỗi quota nếu model miễn phí hết lượt. Dùng tài liệu và hóa đơn giả lập để demo. [OpenRouter Free Models](https://openrouter.ai/collections/free-models/)
 
+Trong UI Day 2, khung **Chat với AI** gọi endpoint `POST /api/day2/chat` qua backend. Chạy PostgreSQL, migration và API như mục 2, rồi mở trang Day 2. Chat không cần ví, nhưng cần `OPENROUTER_API_KEY` trong `project/.env` và phải khởi động lại API sau khi thêm key. Chọn **API local** nếu cần kiểm tra order. Khung chat gọi OpenRouter thật ở cả hai chế độ giao diện.
+
 ```powershell
 cd 'D:\26120200\team1_vietnam_unihack\project'
 node --env-file=.env tests/day2-ai-live.mjs
