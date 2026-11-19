@@ -42,14 +42,21 @@ function wallet(req,scope,action,id,input) {
   }
 }
 function rateLimit(owner,action) {
-  const current = Math.floor(Date.now()/60_000);
+  const now = Date.now();
+  const current = Math.floor(now/60_000);
   if (current !== minute) { buckets.clear(); minute=current; }
   const key = action+':'+owner;
   const walletCount = buckets.get(key) ?? 0;
-  const total = buckets.get('total') ?? 0;
-  if (walletCount >= 5 || total >= 20) throw new ApiError(429,'Local execution rate limit');
+  const isProof = action === 'prepare-proof';
+  const totalKey = isProof ? 'total:prepare-proof' : 'total';
+  const total = buckets.get(totalKey) ?? 0;
+  if (walletCount >= 5 || total >= 20) {
+    const seconds = Math.ceil(((current + 1) * 60_000 - now)/1000);
+    const operation = isProof ? 'tạo proof' : 'gửi yêu cầu';
+    throw new ApiError(429,`Đã đạt giới hạn ${operation}. Thử lại sau ${seconds} giây.`);
+  }
   buckets.set(key,walletCount+1);
-  buckets.set('total',total+1);
+  buckets.set(totalKey,total+1);
 }
 async function saveOrder(order) {
   await pool.query(`INSERT INTO service_orders(order_id,buyer,snapshot) VALUES($1,$2,$3)
@@ -66,7 +73,6 @@ day2Routes.post('/dispute-preview',wrap(async(req,res)=>{
   res.json({mode:'openrouter_live',...await runPipeline(input)});
 }));
 day2Routes.post('/quote',wrap(async(req,res)=>{
-  rateLimit(req.ip || 'local','quote');
   rateLimit(req.ip || 'local','quote');
   const positive = z.string().regex(/^[1-9][0-9]{0,38}$/);
   const quote = z.object({orderId:hexId,agentId:hexId,policyVersionHash:hexId,

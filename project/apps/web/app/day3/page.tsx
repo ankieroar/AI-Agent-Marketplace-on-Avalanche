@@ -9,6 +9,7 @@ import {
   useSignMessage,
   useSignTypedData,
   usePublicClient,
+  useReadContract,
   useWalletClient,
 } from 'wagmi';
 import {
@@ -74,6 +75,7 @@ type ListingView = {
 };
 
 type OrderView = {
+  orderId: string;
   agentId: string;
   buyer: string;
   seller: string;
@@ -97,10 +99,27 @@ type CaseView = {
   payoutAmount: bigint;
   proofRef: string;
   reviewerApprovalRef: string;
+  resolutionSent: boolean | null;
 };
+
+type Feedback = {
+  type: 'error' | 'success' | 'info';
+  message: string;
+  details?: string;
+};
+
+type AuditEntry = { id: number; time: string; text: string; txHash?: string; chainId?: number };
 
 const QUOTE_KEY = 'day3-service-quote';
 const EXPIRY_SKEW_SECONDS = 30;
+const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
+const REVIEWER_CONFIRMATIONS = {
+  analyze: 'Đã bắt đầu phân tích. Bạn có thể tạo ZK proof.',
+  beginReview: 'Case đã chuyển sang xét duyệt.',
+  approve: 'Đã duyệt hoàn tiền. Gửi phán quyết tới escrow để ghi có cho Buyer.',
+  reject: 'Đã từ chối hoàn tiền. Gửi phán quyết tới escrow để chốt đơn.',
+  sendResolution: 'Escrow đã ghi nhận phán quyết. Ví nhận tiền có thể rút trong mục Số dư escrow.',
+};
 
 function errorText(err: unknown) {
   if (err && typeof err === 'object') {
@@ -108,6 +127,57 @@ function errorText(err: unknown) {
     return value.shortMessage || value.message || 'Lỗi không xác định';
   }
   return 'Lỗi không xác định';
+}
+
+function operationError(error: unknown, fallback: string): Feedback {
+  const shortMessage = errorText(error);
+  const fullMessage = error instanceof Error ? error.message : shortMessage;
+  const isTechnical = /\n|0x[0-9a-f]{64}|revert|execution failed|request arguments|\bRPC\b/i.test(fullMessage)
+    || fullMessage.length > 180;
+  const messageWithReason = `${fallback} ${shortMessage}`;
+  let message = isTechnical ? fallback : messageWithReason;
+  if (/user rejected|user denied|rejected by (the )?user/i.test(fullMessage)) {
+    message = 'Bạn đã từ chối yêu cầu trong ví. Thử lại khi sẵn sàng.';
+  } else if (/insufficient funds|insufficient balance/i.test(fullMessage)) {
+    message = 'Ví không đủ số dư để thực hiện giao dịch. Kiểm tra số dư và phí gas.';
+  }
+  return {
+    type: 'error',
+    message,
+    details: message === messageWithReason ? undefined : fullMessage,
+  };
+}
+
+function FeedbackNotice({
+  feedback, pending = false, onDismiss,
+}: {
+  feedback: Feedback;
+  pending?: boolean;
+  onDismiss?: () => void;
+}) {
+  return (
+    <div
+      className={styles.notice}
+      data-tone={feedback.type}
+      role={feedback.type === 'error' ? 'alert' : 'status'}
+    >
+      <span className={pending ? styles.spinner : styles.noticeIcon} aria-hidden="true">
+        {!pending && (feedback.type === 'success' ? '✓' : feedback.type === 'error' ? '!' : 'i')}
+      </span>
+      <div className={styles.noticeBody}>
+        <div>{feedback.message}</div>
+        {feedback.details && (
+          <details key={feedback.details} className={styles.errorDetails}>
+            <summary>Xem toàn bộ lỗi</summary>
+            <pre tabIndex={0} aria-label="Chi tiết lỗi">{feedback.details}</pre>
+          </details>
+        )}
+      </div>
+      {onDismiss && !pending && (
+        <button className={styles.dismissNotice} aria-label="Đóng thông báo" onClick={onDismiss}>×</button>
+      )}
+    </div>
+  );
 }
 
 function sameAddress(left?: string, right?: string) {
@@ -118,8 +188,9 @@ function isHex32(value: unknown): value is `0x${string}` {
   return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
 }
 
-function readOrder(data: any): OrderView {
+function readOrder(orderId: string, data: any): OrderView {
   return {
+    orderId,
     agentId: (data.agentId ?? data[0]) as string,
     buyer: (data.buyer ?? data[1]) as string,
     seller: (data.seller ?? data[2]) as string,
@@ -190,7 +261,7 @@ export default function Day3Page() {
   const { data: walletClient } = useWalletClient();
 
   const [runtimeAddresses, setRuntimeAddresses] = useState<Partial<LocalAddresses> | null>(null);
-  const [runtimeError, setRuntimeError] = useState('');
+  const [runtimeError, setRuntimeError] = useState<Feedback | null>(null);
 
   // --- UI & Role Mode ---
   const [activeRole, setActiveRole] = useState<Role>('buyer');
@@ -234,7 +305,8 @@ export default function Day3Page() {
   // --- Buyer / Marketplace States ---
   const [orderId, setOrderIdState] = useState<string>('');
   const [documentText, setDocumentText] = useState(EXAMPLE_DOC);
-  const [orderOnChain, setOrderOnChain] = useState<OrderView | null>(null);
+  const [loadedOrder, setOrderOnChain] = useState<OrderView | null>(null);
+  const orderOnChain = sameAddress(loadedOrder?.orderId, orderId.trim()) ? loadedOrder : null;
 
   const [aiResult, setAiResult] = useState<(Result & { mode: string; hash: string }) | null>(null);
   const [caseId, setCaseId] = useState<string>('');
@@ -276,48 +348,64 @@ export default function Day3Page() {
     };
   } | null>(null);
 
-  const [reviewerCase, setReviewerCase] = useState<CaseView | null>(null);
+  const [loadedReviewerCase, setReviewerCase] = useState<CaseView | null>(null);
+  const reviewerCase = sameAddress(loadedReviewerCase?.claim.caseId, caseId.trim()) ? loadedReviewerCase : null;
   const [proofJson, setProofJson] = useState('');
   const [refundWei, setRefundWei] = useState('');
+  const [generatingProof, setGeneratingProof] = useState(false);
+  const [sendingEvidence, setSendingEvidence] = useState(false);
   async function prepareCaseProof() {
     const id = caseId.trim().toLowerCase();
     if (!isHex32(id) || reviewerCase?.claim.caseId.toLowerCase() !== id) {
       setFeedback({ type: 'error', message: 'Tra cứu đúng Case ID trước khi tạo proof.' });
       return;
     }
+    const requestedRefund = refundWei.trim();
+    if (requestedRefund && !/^[1-9][0-9]*$/.test(requestedRefund)) {
+      setFeedback({ type: 'error', message: 'Số tiền hoàn phải là số nguyên lớn hơn 0, tính bằng wei.' });
+      return;
+    }
     setBusy(true);
+    setGeneratingProof(true);
     setProofJson('');
+    setFeedback({ type: 'info', message: 'Đang tạo ZK proof bằng WASM…' });
     try {
       const response = await fetch('/api/day3/cases/' + id + '/prepare-proof', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(refundWei.trim() ? {refundWei:refundWei.trim()} : {}),
+        body: JSON.stringify(requestedRefund ? { refundWei: requestedRefund } : {}),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Không tạo được proof');
+      if (!response.ok) {
+        if (response.status === 409 && result.error === 'refundWei is required until an analysis is available for this case') {
+          throw new Error('Worker chưa lưu mức hoàn cho case này. Nhập số tiền hoàn bằng wei rồi tạo proof lại.');
+        }
+        throw new Error(result.error || 'Không tạo được proof');
+      }
       setProofJson(JSON.stringify({proof:result.proof,publicInputs:result.publicInputs}));
       setRefundWei(result.payoutWei);
       setFeedback({type:'success',message:`Đã tạo proof cho ${formatPayout(result.payoutWei)}. Kiểm tra số tiền rồi ký nộp proof.`});
     } catch (error) {
-      setFeedback({type:'error',message:errorText(error)});
+      setFeedback(operationError(error, 'Tạo ZK proof thất bại.'));
     } finally {
+      setGeneratingProof(false);
       setBusy(false);
     }
   }
-  const [claimable, setClaimable] = useState<bigint | null>(null);
 
   // --- Timeline & Operation Feeds ---
-  const [logs, setLogs] = useState<Array<{ time: string; text: string; txHash?: string; chainId?: number }>>([]);
+  const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [addingLocalNetwork, setAddingLocalNetwork] = useState(false);
 
   const addLog = (text: string, txHash?: string, chainId?: number) => {
     const time = new Date().toLocaleTimeString('vi-VN');
-    setLogs((prev) => [{ time, text, txHash, chainId }, ...prev]);
+    setLogs((prev) => [{ id: prev.length + 1, time, text, txHash, chainId }, ...prev]);
   };
 
   const isReviewerWallet = sameAddress(address, reviewerAddress);
   const isSellerWallet = !!address && sameAddress(address, listing?.seller);
+  const isOrderBuyer = !!address && sameAddress(address, orderOnChain?.buyer);
   const onSettlementChain = chain?.id === settlementChainId;
   const quoteForConnectedBuyer = !!signedQuote && sameAddress(signedQuote.buyer, address);
   const quoteDomainMatches =
@@ -330,7 +418,7 @@ export default function Day3Page() {
   useEffect(() => {
     if (!isLocal) {
       setRuntimeAddresses(null);
-      setRuntimeError('');
+      setRuntimeError(null);
       return;
     }
     let alive = true;
@@ -346,12 +434,12 @@ export default function Day3Page() {
       .then((data) => {
         if (!alive) return;
         setRuntimeAddresses(data.addresses);
-        setRuntimeError('');
+        setRuntimeError(null);
       })
       .catch((error: unknown) => {
         if (!alive) return;
         setRuntimeAddresses(null);
-        setRuntimeError(errorText(error));
+        setRuntimeError(operationError(error, 'Không đọc được cấu hình contract local.'));
       });
     return () => {
       alive = false;
@@ -368,7 +456,7 @@ export default function Day3Page() {
       const receipt = await settlementClient.waitForTransactionReceipt({hash});
       if (receipt.status !== 'success') throw new Error('Đăng ký listing thất bại');
       await loadListing();
-    } catch (error) { setFeedback({type:'error',message:errorText(error)}); }
+    } catch (error) { setFeedback(operationError(error, 'Không đăng ký được listing.')); }
     finally { setBusy(false); }
   }
 
@@ -408,7 +496,9 @@ export default function Day3Page() {
       if (seller && !sameAddress(seller, address)) setBuyerForQuote((prev) => prev || (address ?? ''));
     } catch (error) {
       setListing(null);
-      setListingError('Không đọc được listing: ' + errorText(error));
+      const failure = operationError(error, 'Không đọc được listing.');
+      setListingError(failure.message);
+      setFeedback(failure);
     } finally {
       setListingBusy(false);
     }
@@ -455,29 +545,19 @@ export default function Day3Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- Escrow claimable balance for the connected wallet ---
-  async function loadClaimable() {
-    if (!settlementClient || !address || zeroAddress(escrowAddress)) {
-      setClaimable(null);
-      return;
-    }
-    try {
-      const value = (await settlementClient.readContract({
-        address: escrowAddress,
-        abi: settlementEscrowAbi,
-        functionName: 'claimable',
-        args: [address],
-      })) as bigint;
-      setClaimable(value);
-    } catch {
-      setClaimable(null);
-    }
-  }
-
-  useEffect(() => {
-    void loadClaimable();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, escrowAddress, settlementClient, orderOnChain?.status]);
+  const {
+    data: claimable,
+    isFetching: loadingClaimable,
+    isError: claimableUnavailable,
+    refetch: refreshClaimable,
+  } = useReadContract({
+    address: escrowAddress,
+    abi: settlementEscrowAbi,
+    functionName: 'claimable',
+    args: address ? [address] : undefined,
+    chainId: settlementChainId,
+    query: { enabled: !!address && !zeroAddress(escrowAddress) },
+  });
 
   // --- Helper: Check Order On-Chain (always on the settlement chain) ---
   async function fetchOrder(idToQuery?: string) {
@@ -499,13 +579,14 @@ export default function Day3Page() {
         functionName: 'orders',
         args: [targetId],
       });
-      const order = readOrder(data);
+      const order = readOrder(targetId, data);
       setOrderOnChain(order);
       setOrderIdState(targetId);
-      if (isHex32(order.caseId) && order.caseId !== `0x${'0'.repeat(64)}`) setCaseId(order.caseId);
+      if (isHex32(order.caseId) && order.caseId !== ZERO_BYTES32) setCaseId(order.caseId);
+      if (address && !zeroAddress(escrowAddress)) void refreshClaimable();
       addLog(`Tra cứu Order on-chain thành công (${ORDER_STATUS_LABELS[order.status] || order.status})`, undefined, settlementChainId);
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi tra cứu contract: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không tra cứu được đơn hàng.'));
     } finally {
       setBusy(false);
     }
@@ -525,10 +606,9 @@ export default function Day3Page() {
         ? 'Đã chuyển mạng. Bấm lại thao tác để gửi giao dịch.'
         : 'Đã chuyển mạng.' });
     } catch (error) {
-      const message = errorText(error);
-      setFeedback({ type: 'error', message: target === LOCAL_CHAIN_ID
-        ? `Ví chưa chuyển sang Hardhat Local: ${message} Nếu chưa có mạng này trong Core, bấm “Thêm Hardhat vào ví”.`
-        : 'Không chuyển được mạng: ' + message });
+      setFeedback(operationError(error, target === LOCAL_CHAIN_ID
+        ? 'Chưa chuyển được sang Hardhat Local. Nếu Core chưa có mạng này, bấm “Thêm Hardhat vào ví”.'
+        : 'Không chuyển được mạng.'));
     }
     return false;
   }
@@ -554,10 +634,7 @@ export default function Day3Page() {
       }
       setFeedback({ type: 'info', message: 'Đã chuyển sang Hardhat Local.' });
     } catch (error) {
-      setFeedback({
-        type: 'error',
-        message: `Ví chưa thiết lập được Hardhat Local: ${errorText(error)} Trong Core, mở Settings → Networks để chọn hoặc thêm RPC ${hardhat.rpcUrls.default.http[0]}, Chain ID ${hardhat.id}, ký hiệu ${hardhat.nativeCurrency.symbol}.`,
-      });
+      setFeedback(operationError(error, 'Không thêm được Hardhat Local. Kiểm tra mạng trong Core → Settings → Networks.'));
     } finally {
       setAddingLocalNetwork(false);
     }
@@ -671,7 +748,7 @@ export default function Day3Page() {
         )} AVAX. Chuyển vai trò sang Buyer để mua.`,
       });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi ký quote: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không ký được quote.'));
     } finally {
       setQuoteBusy(false);
     }
@@ -695,7 +772,7 @@ export default function Day3Page() {
           : 'Đã nạp quote — kiểm tra lại mạng và địa chỉ ServiceOrderManager trước khi mua.',
       });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Quote không hợp lệ: ' + errorText(error) });
+      setFeedback(operationError(error, 'Quote không hợp lệ.'));
     }
   }
 
@@ -759,22 +836,16 @@ export default function Day3Page() {
         ],
         value: BigInt(signedQuote.priceWei),
       });
-      addLog(`Đã gửi purchaseService: ${txHash}`, txHash, settlementChainId);
+      addLog('Đã gửi giao dịch mua dịch vụ', txHash, settlementChainId);
       setFeedback({ type: 'info', message: 'Đang chờ block xác nhận...' });
       const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
       if (receipt.status !== 'success') throw new Error('Giao dịch mua đã bị revert.');
       setOrderIdState(signedQuote.orderId);
       addLog(`Order đã tạo thành công: ${signedQuote.orderId}`, receipt.transactionHash, settlementChainId);
-      setFeedback({ type: 'success', message: `Đã mua dịch vụ. Order ID: ${signedQuote.orderId}` });
       await fetchOrder(signedQuote.orderId);
+      setFeedback({ type: 'success', message: 'Đã mua dịch vụ. Bạn có thể gửi tài liệu cho Service Agent.' });
     } catch (error) {
-      setFeedback({
-        type: 'error',
-        message:
-          'Lỗi giao dịch mua on-chain: ' +
-          errorText(error) +
-          '. Kiểm tra: listing còn active, quote chưa hết hạn, đúng giá và Seller đã ký cho đúng Buyer.',
-      });
+      setFeedback(operationError(error, 'Không mua được dịch vụ. Kiểm tra giá, địa chỉ Buyer và hạn của quote.'));
     } finally {
       setBusy(false);
     }
@@ -840,10 +911,10 @@ export default function Day3Page() {
       setSellerResultHash(data.resultHash);
 
       addLog(`Service Agent hoàn tất phân tích (Mode: ${data.mode})`);
-      setFeedback({ type: 'success', message: 'Service Agent đã trả kết quả phân tích có cấu trúc!' });
       await fetchOrder();
+      setFeedback({ type: 'success', message: 'Service Agent đã trả kết quả. Gửi Order ID và Result hash cho Seller để bàn giao.' });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi thực thi AI: ' + errorText(error) });
+      setFeedback(operationError(error, 'Service Agent không trả được kết quả.'));
     } finally {
       setBusy(false);
     }
@@ -870,13 +941,13 @@ export default function Day3Page() {
         functionName: 'markDelivered',
         args: [orderId as `0x${string}`, sellerResultHash as `0x${string}`],
       });
-      addLog(`Seller gửi markDelivered: ${txHash}`, txHash, settlementChainId);
+      addLog('Seller gửi xác nhận bàn giao', txHash, settlementChainId);
       const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
       if (receipt.status !== 'success') throw new Error('Giao dịch bàn giao bị revert.');
       await fetchOrder();
       setFeedback({ type: 'success', message: 'Đã đánh dấu Delivered. Buyer có thể Accept hoặc Dispute.' });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi markDelivered: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không xác nhận được bàn giao.'));
     } finally {
       setBusy(false);
     }
@@ -893,13 +964,13 @@ export default function Day3Page() {
         abi: settlementEscrowAbi,
         functionName: 'withdraw',
       });
-      addLog(`Rút tiền từ escrow: ${txHash}`, txHash, settlementChainId);
+      addLog('Đã gửi giao dịch rút tiền từ escrow', txHash, settlementChainId);
       const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
       if (receipt.status !== 'success') throw new Error('Giao dịch rút tiền bị revert.');
-      await loadClaimable();
+      await refreshClaimable();
       setFeedback({ type: 'success', message: 'Đã rút tiền về ví.' });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi rút escrow: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không rút được tiền từ escrow.'));
     } finally {
       setBusy(false);
     }
@@ -926,7 +997,7 @@ export default function Day3Page() {
         functionName: 'accept',
         args: [orderId as `0x${string}`],
       });
-      addLog(`Buyer gửi lệnh Accept: ${txHash}`, txHash, settlementChainId);
+      addLog('Buyer gửi xác nhận nghiệm thu', txHash, settlementChainId);
       const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
       if (receipt.status !== 'success') throw new Error('Giao dịch Accept bị revert.');
       addLog('Escrow đã ghi số dư cho Seller. Seller cần gọi withdraw().', undefined, settlementChainId);
@@ -936,7 +1007,7 @@ export default function Day3Page() {
         message: 'Buyer đã chấp nhận kết quả. Escrow ghi có cho Seller; Seller rút bằng nút trong tab Seller.',
       });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi khi Accept order: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không nghiệm thu được đơn hàng.'));
     } finally {
       setBusy(false);
     }
@@ -963,7 +1034,7 @@ export default function Day3Page() {
       await fetchOrder(id);
       setFeedback({ type: 'success', message: 'Đã quyết toán. Kiểm tra số dư escrow bằng ví nhận tiền.' });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Chỉ quyết toán được đơn Paid hoặc Delivered sau hạn khiếu nại. ' + errorText(error) });
+      setFeedback(operationError(error, 'Chỉ quyết toán được đơn Paid hoặc Delivered sau hạn khiếu nại.'));
     } finally {
       setBusy(false);
     }
@@ -991,7 +1062,7 @@ export default function Day3Page() {
         functionName: 'openCase',
         args: [orderId as `0x${string}`],
       });
-      addLog(`Giao dịch mở dispute đã gửi: ${txHash}`, txHash, settlementChainId);
+      addLog('Đã gửi giao dịch mở tranh chấp', txHash, settlementChainId);
       const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
       if (receipt.status !== 'success') throw new Error('Giao dịch mở tranh chấp bị revert.');
 
@@ -1022,29 +1093,38 @@ export default function Day3Page() {
         message: 'Đã mở khiếu nại. Reviewer có thể tra cứu case trên cùng mạng.',
       });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi khi mở dispute: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không mở được tranh chấp.'));
     } finally {
       setBusy(false);
     }
   }
 
   async function uploadBuyerEvidence() {
-    if (!isHex32(caseId) || !evidenceText.trim()) return;
+    const caseForOrder = orderOnChain?.caseId;
+    if (!isOrderBuyer || orderOnChain?.status !== 4 || !isHex32(caseForOrder) || !evidenceText.trim()) return;
     setBusy(true);
+    setSendingEvidence(true);
+    setFeedback({ type: 'info', message: 'Xác nhận chữ ký trong ví Buyer để gửi bằng chứng.' });
     try {
-      const id = caseId.toLowerCase();
+      const id = caseForOrder.toLowerCase();
       const body = JSON.stringify({caseId:id,text:evidenceText.trim()});
       const expires = String(Math.floor(Date.now()/1000)+240);
       const scope = settlementChainId + ':' + orderManagerAddress.toLowerCase();
       const message = ['Warranty Day 2 request',scope,'upload',id,expires,sha256(toBytes(body)).slice(2)].join('\n');
       const signature = await signMessageAsync({message});
+      setFeedback({ type: 'info', message: 'Đang lưu bằng chứng cho case…' });
       const response = await fetch('/api/day3/cases/upload',{method:'POST',body,
         headers:{'Content-Type':'application/json','X-Wallet-Expires':expires,'X-Wallet-Signature':signature}});
       const record = await response.json();
       if (!response.ok) throw new Error(record.error || 'Không lưu được bằng chứng');
-      setFeedback({type:'success',message:'Đã lưu bằng chứng cho case. ID: '+record.id});
-    } catch (error) { setFeedback({type:'error',message:errorText(error)}); }
-    finally { setBusy(false); }
+      addLog(`Đã lưu bằng chứng cho case ${id}`);
+      setFeedback({ type: 'success', message: 'Đã lưu bằng chứng. Reviewer có thể tra cứu Case ID để xử lý.' });
+    } catch (error) {
+      setFeedback(operationError(error, 'Không gửi được bằng chứng.'));
+    } finally {
+      setSendingEvidence(false);
+      setBusy(false);
+    }
   }
 
   // --- 5. Reviewer: Fetch the on-chain case ---
@@ -1068,10 +1148,24 @@ export default function Day3Page() {
         args: [idToLook],
       })) as any;
       const claimVal = data.claim || data[0];
-      const statusVal = data.status ?? data[1];
+      const status = Number(data.status ?? data[1]);
+      if (status === 0) {
+        setReviewerCase(null);
+        setFeedback({ type: 'error', message: 'Không tìm thấy case trên mạng hiện tại. Kiểm tra lại Case ID.' });
+        return;
+      }
       const payoutAmountVal = data.payoutAmount ?? data[2];
       const proofRefVal = data.proofRef ?? data[3];
       const reviewerApprovalRefVal = data.reviewerApprovalRef ?? data[4];
+      let resolutionSent: boolean | null = null;
+      if ((status === 5 || status === 6) && !zeroAddress(resultSenderAddress)) {
+        resolutionSent = await disputeClient.readContract({
+          address: resultSenderAddress,
+          abi: disputeResultSenderAbi,
+          functionName: 'sent',
+          args: [idToLook],
+        }).catch(() => null);
+      }
       const view: CaseView = {
         claim: {
           caseId: claimVal.caseId ?? claimVal[0],
@@ -1082,16 +1176,22 @@ export default function Day3Page() {
           purchaseTimestamp: BigInt(claimVal.purchaseTimestamp ?? claimVal[8]),
           claimDeadline: BigInt(claimVal.claimDeadline ?? claimVal[9]),
         },
-        status: Number(statusVal),
+        status,
         payoutAmount: BigInt(payoutAmountVal),
         proofRef: proofRefVal,
         reviewerApprovalRef: reviewerApprovalRefVal,
+        resolutionSent,
       };
+      if (!sameAddress(loadedReviewerCase?.claim.caseId, idToLook)) {
+        setProofJson('');
+        setRefundWei('');
+        setPipelineResult(null);
+      }
       setReviewerCase(view);
       setCaseId(idToLook);
-      addLog(`Reviewer tra cứu Case L1 thành công (${CASE_STATUS_LABELS[view.status] || view.status})`, undefined, disputeChainId);
+      addLog(`Đã tra cứu case · ${CASE_STATUS_LABELS[view.status] || view.status}`, undefined, disputeChainId);
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi tra cứu case: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không tra cứu được case.'));
     } finally {
       setBusy(false);
     }
@@ -1136,7 +1236,7 @@ export default function Day3Page() {
         message: `3 Dispute Agents đã phân tích xong. Đề xuất hoàn: ${formatEther(BigInt(data.resolution.proposedPayout))} AVAX (chỉ là khuyến nghị, không phải phán quyết).`,
       });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi chạy Dispute Agents: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không chạy được Dispute Agents.'));
     } finally {
       setPipelineBusy(false);
     }
@@ -1196,30 +1296,38 @@ export default function Day3Page() {
         functionName: 'submitProof',
         args: [id, amount, nullifier, parsed.proof as `0x${string}`],
       });
-      addLog(`Reviewer nộp ZK proof (${formatEther(amount)} AVAX): ${txHash}`, txHash, disputeChainId);
+      addLog(`Reviewer nộp ZK proof (${formatEther(amount)} AVAX)`, txHash, disputeChainId);
       const receipt = await disputeClient.waitForTransactionReceipt({ hash: txHash });
       if (receipt.status !== 'success') throw new Error('Giao dịch bị revert. Kiểm tra proof có thuộc đúng case và chưa được dùng.');
       await handleFetchCase(id);
       setFeedback({ type: 'success', message: 'Proof đã được xác minh on-chain. Chuyển sang Merchant Review.' });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Lỗi nộp proof: ' + errorText(error) });
+      setFeedback(operationError(error, 'Không nộp được ZK proof.'));
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleReviewerAction(action: 'analyze' | 'beginReview' | 'approve' | 'reject' | 'sendResolution') {
-    if (!walletClient || !caseId) return;
+  async function handleReviewerAction(action: keyof typeof REVIEWER_CONFIRMATIONS) {
+    if (!walletClient || !disputeClient) return;
     if (!isReviewerWallet) {
       setFeedback({ type: 'error', message: 'Ví hiện tại không phải reviewer của DisputeManager.' });
+      return;
+    }
+    const cId = caseId.trim().toLowerCase();
+    if (!isHex32(cId) || !reviewerCase) {
+      setFeedback({ type: 'error', message: 'Tra cứu đúng Case ID trước khi thực hiện thao tác.' });
+      return;
+    }
+    if (action === 'sendResolution' && reviewerCase.resolutionSent) {
+      setFeedback({ type: 'info', message: 'Phán quyết của case này đã được gửi tới escrow.' });
       return;
     }
     if (!(await ensureChain(disputeChainId))) return;
 
     setBusy(true);
-    setFeedback(null);
+    setFeedback({ type: 'info', message: 'Xác nhận giao dịch trong ví Reviewer.' });
     try {
-      const cId = caseId as `0x${string}`;
       let txHash: `0x${string}`;
 
       if (action === 'analyze') {
@@ -1229,7 +1337,7 @@ export default function Day3Page() {
           functionName: 'startAnalysis',
           args: [cId],
         });
-        addLog(`Reviewer bắt đầu phân tích chứng cứ: ${txHash}`, txHash, disputeChainId);
+        addLog('Reviewer bắt đầu phân tích chứng cứ', txHash, disputeChainId);
       } else if (action === 'beginReview') {
         txHash = await walletClient.writeContract({
           address: disputeManagerAddress,
@@ -1237,9 +1345,9 @@ export default function Day3Page() {
           functionName: 'beginReview',
           args: [cId],
         });
-        addLog(`Chuyển case sang Merchant/Reviewer xét duyệt: ${txHash}`, txHash, disputeChainId);
+        addLog('Chuyển case sang xét duyệt', txHash, disputeChainId);
       } else if (action === 'approve') {
-        if (!reviewerCase?.proofRef || reviewerCase.proofRef === `0x${'0'.repeat(64)}`) {
+        if (!reviewerCase.proofRef || reviewerCase.proofRef === ZERO_BYTES32) {
           setFeedback({ type: 'error', message: 'Chưa có ZK proof verified; hợp đồng sẽ từ chối approve.' });
           return;
         }
@@ -1250,7 +1358,7 @@ export default function Day3Page() {
           functionName: 'decide',
           args: [cId, true, approvalRef],
         });
-        addLog(`Reviewer ĐỒNG Ý hoàn ${formatEther(reviewerCase.payoutAmount)} AVAX: ${txHash}`, txHash, disputeChainId);
+        addLog(`Reviewer duyệt hoàn ${formatEther(reviewerCase.payoutAmount)} AVAX`, txHash, disputeChainId);
       } else if (action === 'reject') {
         const approvalRef = keccak256(stringToHex(`reviewer-reject-${Date.now()}`));
         txHash = await walletClient.writeContract({
@@ -1259,7 +1367,7 @@ export default function Day3Page() {
           functionName: 'decide',
           args: [cId, false, approvalRef],
         });
-        addLog(`Reviewer TỪ CHỐI hoàn tiền: ${txHash}`, txHash, disputeChainId);
+        addLog('Reviewer từ chối hoàn tiền', txHash, disputeChainId);
       } else {
         txHash = await walletClient.writeContract({
           address: resultSenderAddress,
@@ -1270,24 +1378,32 @@ export default function Day3Page() {
         addLog('Gửi phán quyết tới escrow', txHash, disputeChainId);
       }
 
-      const receipt = await disputeClient!.waitForTransactionReceipt({ hash: txHash });
+      setFeedback({ type: 'info', message: 'Đã gửi giao dịch. Đang chờ xác nhận trên mạng…' });
+      const receipt = await disputeClient.waitForTransactionReceipt({ hash: txHash });
       if (receipt.status !== 'success') throw new Error('Giao dịch reviewer bị revert.');
-      await handleFetchCase(caseId);
-      setFeedback({ type: 'success', message: action === 'sendResolution'
-        ? 'Escrow đã ghi nhận phán quyết. Đổi sang ví nhận tiền để rút.'
-        : `Đã xác nhận thao tác [${action}] trên chain.` });
+      await handleFetchCase(cId);
+      setFeedback({ type: 'success', message: REVIEWER_CONFIRMATIONS[action] });
     } catch (error) {
-      setFeedback({ type: 'error', message: `Lỗi thao tác reviewer: ` + errorText(error) });
+      if (action === 'sendResolution' && /already sent/i.test(errorText(error))) {
+        await handleFetchCase(cId);
+        setFeedback({
+          type: 'info',
+          message: 'Phán quyết của case này đã được gửi tới escrow. Kiểm tra số dư bằng ví nhận tiền.',
+          details: error instanceof Error ? error.message : errorText(error),
+        });
+      } else {
+        setFeedback(operationError(error, 'Giao dịch Reviewer không thành công.'));
+      }
     } finally {
       setBusy(false);
     }
   }
 
-  const zeroBytes32 = `0x${'0'.repeat(64)}`;
   const contractExplorer = EXPLORERS[settlementChainId];
   const disputeExplorer = EXPLORERS[disputeChainId];
   const listingPrice = listing?.priceWei ?? 10000000000000000n;
   const maxRefund = (listingPrice * 3n) / 4n;
+  const canReview = !busy && isReviewerWallet && !!reviewerCase;
 
   return (
     <main className={styles.container}>
@@ -1302,7 +1418,7 @@ export default function Day3Page() {
       </header>
 
       {/* --- Top Bar: Network Info & Multi-Role Selector --- */}
-      <nav className={styles.navBar}>
+      <nav className={styles.navBar} aria-label="Ví và vai trò">
         <div className={styles.networkStatus}>
           <span
             className={`${styles.badge} ${
@@ -1317,22 +1433,23 @@ export default function Day3Page() {
 
           {isConnected ? (
             <button className={styles.btnSecondary} onClick={() => disconnect()}>
-              Ngắt ví ({address?.slice(0, 6)}...{address?.slice(-4)})
+              Ngắt ví ({address?.slice(0, 6)}…{address?.slice(-4)})
             </button>
           ) : connectors.map((wallet) => (
             <button
               key={wallet.uid}
               className={styles.btnPrimary}
               disabled={connecting}
-              onClick={() => connect({ connector: wallet })}
+              onClick={() => {
+                setFeedback(null);
+                connect({ connector: wallet });
+              }}
             >
-              Kết nối {wallet.id === 'injected' ? 'ví trình duyệt' : wallet.name}
+              {connecting ? 'Đang kết nối…' : `Kết nối ${wallet.id === 'injected' ? 'ví trình duyệt' : wallet.name}`}
             </button>
           ))}
         </div>
-        {!isConnected && connectError && <p role="alert">{errorText(connectError)}</p>}
-
-        <div className={styles.actions} style={{ margin: 0 }}>
+        <div className={styles.networkActions}>
           <button
             className={styles.btnSecondary}
             disabled={!isConnected || chainId === settlementChainId || addingLocalNetwork}
@@ -1351,9 +1468,10 @@ export default function Day3Page() {
           )}
         </div>
 
-        <div className={styles.roleSelector}>
+        <div className={styles.roleSelector} role="group" aria-label="Vai trò hiển thị">
           <button
             className={`${styles.roleBtn} ${activeRole === 'buyer' ? styles.roleBtnActive : ''}`}
+            aria-pressed={activeRole === 'buyer'}
             onClick={() => {
               setActiveRole('buyer');
               setActiveTab('marketplace');
@@ -1363,6 +1481,7 @@ export default function Day3Page() {
           </button>
           <button
             className={`${styles.roleBtn} ${activeRole === 'seller' ? styles.roleBtnActive : ''}`}
+            aria-pressed={activeRole === 'seller'}
             onClick={() => {
               setActiveRole('seller');
               setActiveTab('seller');
@@ -1372,6 +1491,7 @@ export default function Day3Page() {
           </button>
           <button
             className={`${styles.roleBtn} ${activeRole === 'reviewer' ? styles.roleBtnActive : ''}`}
+            aria-pressed={activeRole === 'reviewer'}
             onClick={() => {
               setActiveRole('reviewer');
               setActiveTab('reviewer');
@@ -1382,16 +1502,19 @@ export default function Day3Page() {
         </div>
       </nav>
 
-      {/* --- Feedback Notification --- */}
-      {feedback && (
-        <div className={feedback.type === 'error' ? styles.alertBox : styles.successBox}>
-          {feedback.message}
+      {feedback ? (
+        <div className={styles.notificationArea}>
+          <FeedbackNotice
+            feedback={feedback}
+            pending={feedback.type === 'info' && (busy || quoteBusy || pipelineBusy || addingLocalNetwork)}
+            onDismiss={() => setFeedback(null)}
+          />
         </div>
+      ) : !isConnected && connectError && (
+        <FeedbackNotice feedback={operationError(connectError, 'Không kết nối được ví.')} />
       )}
       {runtimeError && isLocal && (
-        <div className={styles.alertBox}>
-          {runtimeError} — dán địa chỉ thủ công trong mục “Cấu hình địa chỉ Contract”.
-        </div>
+        <FeedbackNotice feedback={runtimeError} />
       )}
 
       {/* --- Main Dashboard Grid --- */}
@@ -1403,13 +1526,7 @@ export default function Day3Page() {
             <>
               {/* Step 1: Browse Listing */}
               <section className={styles.panel}>
-                <h2>
-                  <span>1. Curated AI Service</span>
-                  <span className={styles.badge} style={{ background: '#23343e' }}>
-                    P0 MVP
-                  </span>
-                </h2>
-                <h3>Document Summary Agent</h3>
+                <h2>Document Summary Agent</h2>
                 <p>
                   Nhận văn bản/hợp đồng đầu vào, phân tích và trích xuất tóm tắt ngắn, ý chính và các điều khoản cảnh báo rủi
                   ro.
@@ -1548,13 +1665,15 @@ export default function Day3Page() {
               <section className={styles.panel}>
                 <h2>2. Thực thi dịch vụ AI qua Backend API</h2>
 
-                <label className={styles.label}>Mã Order ID (64 ký tự hex):</label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <label className={styles.label} htmlFor="buyer-order-id">Order ID</label>
+                <div className={styles.fieldAction}>
                   <input
+                    id="buyer-order-id"
                     className={`${styles.input} ${styles.mono}`}
                     placeholder="0x..."
                     value={orderId}
                     onChange={(e) => setOrderIdState(e.target.value)}
+                    disabled={busy}
                   />
                   <button className={styles.btnSecondary} disabled={busy || !orderId} onClick={() => fetchOrder()}>
                     Kiểm tra
@@ -1587,7 +1706,7 @@ export default function Day3Page() {
                         <span className={styles.statusVal}>Không thể Accept hoặc Dispute thêm.</span>
                       </div>
                     )}
-                    {orderOnChain.caseId && orderOnChain.caseId !== zeroBytes32 && (
+                    {orderOnChain.caseId && orderOnChain.caseId !== ZERO_BYTES32 && (
                       <div className={styles.statusRow}>
                         <span className={styles.statusKey}>Case ID tranh chấp:</span>
                         <span className={`${styles.statusVal} ${styles.mono}`}>{orderOnChain.caseId}</span>
@@ -1644,29 +1763,34 @@ export default function Day3Page() {
                   Nếu hài lòng với kết quả của AI, Buyer chọn <strong>Chấp nhận</strong> để escrow ghi có tiền cho Seller.
                   Nếu dịch vụ vi phạm cam kết, Buyer chọn <strong>Mở tranh chấp</strong> để tạo case trên cùng mạng.
                 </p>
-                {orderOnChain && orderOnChain.status !== 2 && orderOnChain.status !== 1 && (
-                  <p className={styles.hint}>
-                    Order hiện ở trạng thái {ORDER_STATUS_LABELS[orderOnChain.status] || orderOnChain.status}. Accept cần
-                    trạng thái <strong>Delivered</strong>; Dispute cần order còn trong cửa sổ khiếu nại.
+                {orderOnChain?.status === 4 && (
+                  <div className={styles.actionNote}>
+                    <p>Đơn đang tranh chấp. Reviewer dùng Case ID để thẩm định và gửi phán quyết.</p>
+                    <button className={styles.btnSecondary} disabled={busy} onClick={() => void fetchOrder()}>
+                      Làm mới trạng thái đơn
+                    </button>
+                  </div>
+                )}
+                {orderOnChain?.status === 5 && (
+                  <p className={styles.actionNote} data-complete="true">
+                    Đơn đã được quyết toán. Xem mục <a href="#escrow-balance">Số dư escrow</a> để kiểm tra tiền có thể rút.
                   </p>
                 )}
 
                 <div className={styles.actions}>
                   <button
                     className={styles.btnPrimary}
-                    disabled={busy || !orderId || !isConnected || !orderOnChain || orderOnChain.status !== 2}
+                    disabled={busy || !isOrderBuyer || orderOnChain?.status !== 2}
                     onClick={handleAcceptOrder}
                   >
                     ✅ Chấp nhận (Ghi có cho Seller)
                   </button>
 
                   <button
-                    className={styles.btnSecondary}
-                    style={{ borderColor: '#ff867d', color: '#ff867d' }}
+                    className={styles.btnDanger}
                     disabled={
                       busy ||
-                      !orderId ||
-                      !isConnected ||
+                      !isOrderBuyer ||
                       !orderOnChain ||
                       (orderOnChain.status !== 1 && orderOnChain.status !== 2)
                     }
@@ -1684,12 +1808,31 @@ export default function Day3Page() {
                     </button>
                   )}
                 </div>
-                {orderOnChain?.status === 4 && isHex32(caseId) && <div>
-                  <label>Bằng chứng của Buyer
-                    <textarea value={evidenceText} maxLength={30000} onChange={e=>setEvidenceText(e.target.value)}/>
-                  </label>
-                  <button disabled={busy || !evidenceText.trim()} onClick={uploadBuyerEvidence}>Ký và gửi bằng chứng</button>
-                </div>}
+                {orderOnChain?.status === 4 && isHex32(orderOnChain.caseId) && (
+                  <div className={styles.insetPanel} aria-busy={sendingEvidence}>
+                    <label htmlFor="buyer-evidence" className={styles.fieldTitle}>Bằng chứng của Buyer</label>
+                    <textarea
+                      id="buyer-evidence"
+                      className={styles.textarea}
+                      rows={4}
+                      value={evidenceText}
+                      maxLength={30000}
+                      onChange={(e) => setEvidenceText(e.target.value)}
+                      disabled={sendingEvidence}
+                      placeholder="Mô tả vấn đề hoặc điều khoản dịch vụ bị vi phạm"
+                    />
+                    {!isOrderBuyer && <p className={styles.hint}>Kết nối đúng ví Buyer của đơn để ký và gửi bằng chứng.</p>}
+                    <div className={styles.actions}>
+                      <button
+                        className={styles.btnAccent}
+                        disabled={busy || !isOrderBuyer || !evidenceText.trim()}
+                        onClick={uploadBuyerEvidence}
+                      >
+                        {sendingEvidence ? 'Đang gửi bằng chứng…' : 'Ký và gửi bằng chứng'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </section>
             </>
           )}
@@ -1819,23 +1962,6 @@ export default function Day3Page() {
                 </button>
               </div>
 
-              <h3 style={{ marginTop: '1.5rem' }}>3. Rút tiền từ Escrow</h3>
-              <div className={styles.statusCard}>
-                <div className={styles.statusRow}>
-                  <span className={styles.statusKey}>Claimable của ví hiện tại:</span>
-                  <span className={styles.statusVal}>
-                    {claimable === null ? '—' : `${formatEther(claimable)} AVAX`}
-                  </span>
-                </div>
-              </div>
-              <div className={styles.actions}>
-                <button className={styles.btnPrimary} disabled={busy || !claimable || claimable === 0n} onClick={handleWithdraw}>
-                  Withdraw
-                </button>
-                <button className={styles.btnSecondary} disabled={busy} onClick={() => void loadClaimable()}>
-                  Làm mới số dư
-                </button>
-              </div>
             </section>
           )}
 
@@ -1865,13 +1991,15 @@ export default function Day3Page() {
                 </div>
               </div>
 
-              <label className={styles.label}>Nhập Case ID (bytes32):</label>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <label className={styles.label} htmlFor="reviewer-case-id">Case ID</label>
+              <div className={styles.fieldAction}>
                 <input
+                  id="reviewer-case-id"
                   className={`${styles.input} ${styles.mono}`}
                   placeholder="0x..."
                   value={caseId}
                   onChange={(e) => setCaseId(e.target.value)}
+                  disabled={busy}
                 />
                 <button className={styles.btnSecondary} disabled={busy || !caseId} onClick={() => handleFetchCase()}>
                   Tra cứu
@@ -1881,7 +2009,7 @@ export default function Day3Page() {
               {reviewerCase && (
                 <div className={styles.statusCard}>
                   <div className={styles.statusRow}>
-                    <span className={styles.statusKey}>Trạng thái Case L1:</span>
+                    <span className={styles.statusKey}>Trạng thái case</span>
                     <span className={styles.statusVal} style={{ color: '#83e8cc' }}>
                       {CASE_STATUS_LABELS[reviewerCase.status] || reviewerCase.status}
                     </span>
@@ -1904,7 +2032,7 @@ export default function Day3Page() {
                   <div className={styles.statusRow}>
                     <span className={styles.statusKey}>ZK Proof Reference:</span>
                     <span className={`${styles.statusVal} ${styles.mono}`}>
-                      {reviewerCase.proofRef && reviewerCase.proofRef !== zeroBytes32
+                      {reviewerCase.proofRef && reviewerCase.proofRef !== ZERO_BYTES32
                         ? '✅ ' + reviewerCase.proofRef.slice(0, 16) + '...'
                         : '⏳ Chưa xác minh'}
                     </span>
@@ -1914,6 +2042,14 @@ export default function Day3Page() {
                       <span className={styles.statusKey}>Mức hoàn đã xác minh:</span>
                       <span className={styles.statusVal} style={{ color: '#ff867d' }}>
                         {formatPayout(reviewerCase.payoutAmount.toString())}
+                      </span>
+                    </div>
+                  )}
+                  {(reviewerCase.status === 5 || reviewerCase.status === 6) && (
+                    <div className={styles.statusRow}>
+                      <span className={styles.statusKey}>Phán quyết tới escrow</span>
+                      <span className={styles.statusVal}>
+                        {reviewerCase.resolutionSent === true ? 'Đã gửi' : reviewerCase.resolutionSent === false ? 'Chờ gửi' : 'Chưa đọc được'}
                       </span>
                     </div>
                   )}
@@ -1927,16 +2063,28 @@ export default function Day3Page() {
                   </div>
                 </div>
               )}
+              {reviewerCase?.status === 1 && (
+                <div className={styles.actions}>
+                  <button
+                    className={styles.btnPrimary}
+                    disabled={!canReview}
+                    onClick={() => handleReviewerAction('analyze')}
+                  >
+                    Bắt đầu phân tích
+                  </button>
+                </div>
+              )}
 
               {/* 3 Dispute Agents Pipeline trigger */}
-              <div style={{ marginTop: '1.2rem', padding: '1rem', background: '#11191f', borderRadius: '10px', border: '1px solid #23343e' }}>
-                <h3 style={{ margin: '0 0 0.6rem', color: '#83e8cc' }}>🤖 Trợ lý AI: 3 Dispute Agents</h3>
+              <div className={styles.insetPanel} aria-busy={pipelineBusy}>
+                <h3>Phân tích bằng AI</h3>
                 <p style={{ fontSize: '0.88rem', color: '#9db2be', margin: '0 0 0.8rem' }}>
                   Chạy chuỗi phân tích tự động: <strong>Evidence Agent</strong> (bóc tách chứng cứ) → <strong>Policy Agent</strong> (đối chiếu điều khoản) → <strong>Resolution Assistant</strong> (đề xuất mức bồi hoàn cho người duyệt).
                 </p>
 
-                <label className={styles.label}>Nội dung bằng chứng khiếu nại (Evidence):</label>
+                <label className={styles.label} htmlFor="reviewer-evidence">Nội dung bằng chứng</label>
                 <textarea
+                  id="reviewer-evidence"
                   className={styles.textarea}
                   rows={3}
                   value={evidenceText}
@@ -1949,10 +2097,10 @@ export default function Day3Page() {
                 <div className={styles.actions}>
                   <button
                     className={styles.btnAccent}
-                    disabled={pipelineBusy || !isReviewerWallet || !reviewerCase || !evidenceText.trim()}
+                    disabled={busy || pipelineBusy || !isReviewerWallet || !reviewerCase || !evidenceText.trim()}
                     onClick={handleRunDisputePipeline}
                   >
-                    🚀 Chạy 3 Dispute Agents
+                    {pipelineBusy ? 'Đang phân tích bằng chứng…' : 'Chạy 3 Dispute Agents'}
                   </button>
                 </div>
 
@@ -2006,86 +2154,139 @@ export default function Day3Page() {
                 )}
               </div>
 
-              {/* Proof submission (reviewer wallet, proof produced by prover) */}
-              <div style={{ marginTop: '1.2rem', padding: '1rem', background: '#11191f', borderRadius: '10px', border: '1px solid #23343e' }}>
-                <h3 style={{ margin: '0 0 0.6rem', color: '#83e8cc' }}>🔐 Nộp ZK Proof (reviewer wallet)</h3>
-                <p className={styles.hint}>
-                  Proof do prover của Người 2 tạo, ví dụ{' '}
-                  <code>node apps/api/src/prove-case.mjs &lt;caseId&gt; &lt;refundWei&gt; &lt;policy.json&gt;</code>. Dán JSON{' '}
-                  <code>{'{ proof, publicInputs }'}</code> ở đây; ví reviewer gửi <code>submitProof</code> để ProofGate xác minh.
+              <div className={styles.insetPanel} aria-busy={generatingProof}>
+                <h3>ZK proof</h3>
+                {!reviewerCase && <p className={styles.hint}>Tra cứu Case ID để bắt đầu.</p>}
+                {reviewerCase?.status === 1 && <p className={styles.hint}>Bấm Bắt đầu phân tích để mở bước tạo proof.</p>}
+                {reviewerCase && reviewerCase.proofRef !== ZERO_BYTES32 && (
+                  <p className={styles.actionNote} data-complete="true">Proof đã được xác minh trên hợp đồng.</p>
+                )}
+                <label className={styles.label} htmlFor="proof-refund-wei">Số tiền hoàn (wei)</label>
+                <div className={styles.amountField}>
+                  <input
+                    id="proof-refund-wei"
+                    className={`${styles.input} ${styles.amountInput}`}
+                    aria-describedby="proof-refund-hint"
+                    value={refundWei}
+                    inputMode="numeric"
+                    placeholder="Nhập số tiền bằng wei"
+                    disabled={generatingProof}
+                    onChange={(e) => setRefundWei(e.target.value)}
+                  />
+                  <span aria-hidden="true">wei</span>
+                </div>
+                <p id="proof-refund-hint" className={styles.hint}>
+                  Chỉ để trống khi worker đã lưu mức hoàn cho case.
+                  {/^[1-9][0-9]*$/.test(refundWei.trim()) && <> Số tiền bạn nhập tương đương {formatPayout(refundWei.trim())}.</>}
                 </p>
+                <div className={styles.actions}>
+                  <button
+                    className={styles.btnAccent}
+                    disabled={!canReview || reviewerCase?.status !== 2}
+                    onClick={prepareCaseProof}
+                  >
+                    {generatingProof ? 'Đang tạo proof…' : 'Tạo proof bằng WASM'}
+                  </button>
+                </div>
+                <label className={styles.label} htmlFor="proof-json">Proof JSON</label>
                 <textarea
+                  id="proof-json"
                   className={`${styles.textarea} ${styles.mono}`}
-                  rows={5}
-                  placeholder='{"proof":"0x...","publicInputs":["0x...",...15 items]}'
+                  rows={4}
+                  placeholder="Proof sẽ tự điền sau khi tạo hoặc bạn có thể dán JSON vào đây"
                   value={proofJson}
+                  disabled={generatingProof}
                   onChange={(e) => setProofJson(e.target.value)}
+                  spellCheck={false}
                 />
-                <label>Số tiền hoàn (wei, bỏ trống để dùng kết quả phân tích)
-                  <input value={refundWei} inputMode="numeric" onChange={e => setRefundWei(e.target.value)} />
-                </label>
-                <button disabled={busy || !isReviewerWallet || reviewerCase?.status !== 2}
-                  onClick={prepareCaseProof}>Tạo proof bằng WASM</button>
                 <div className={styles.actions}>
                   <button
                     className={styles.btnPrimary}
-                    disabled={busy || !proofJson.trim()}
+                    disabled={!canReview || reviewerCase?.status !== 2 || !proofJson.trim()}
                     onClick={handleSubmitProof}
                   >
                     Nộp Proof
                   </button>
                 </div>
-                <p className={styles.hint}>Tra cứu case, bấm Bắt đầu phân tích, rồi nộp proof khi case ở trạng thái Analyzing.</p>
               </div>
 
+              {reviewerCase && reviewerCase.status >= 2 && (
+                <div className={styles.insetPanel}>
+                  <h3>Phán quyết và quyết toán</h3>
+                  <div className={styles.actions}>
+                    {(reviewerCase.status === 2 || reviewerCase.status === 3) && (
+                      <button
+                        className={styles.btnSecondary}
+                        disabled={!canReview}
+                        onClick={() => handleReviewerAction('beginReview')}
+                      >
+                        Chuyển vào Merchant Review
+                      </button>
+                    )}
+                    {reviewerCase.status === 4 && (
+                      <>
+                        <button
+                          className={styles.btnAccent}
+                          disabled={!canReview || reviewerCase.proofRef === ZERO_BYTES32}
+                          onClick={() => handleReviewerAction('approve')}
+                        >
+                          Duyệt hoàn tiền
+                        </button>
+                        <button className={styles.btnDanger} disabled={!canReview} onClick={() => handleReviewerAction('reject')}>
+                          Từ chối hoàn tiền
+                        </button>
+                      </>
+                    )}
+                    {(reviewerCase.status === 5 || reviewerCase.status === 6) && (
+                      <button
+                        className={styles.btnPrimary}
+                        disabled={!canReview || reviewerCase.resolutionSent === true || zeroAddress(resultSenderAddress)}
+                        onClick={() => handleReviewerAction('sendResolution')}
+                      >
+                        {reviewerCase.resolutionSent ? 'Đã gửi phán quyết' : 'Gửi phán quyết tới escrow'}
+                      </button>
+                    )}
+                  </div>
+                  {reviewerCase.status === 2 && (
+                    <p className={styles.hint}>Để duyệt hoàn tiền, nộp ZK proof trước khi chuyển sang xét duyệt.</p>
+                  )}
+                  {reviewerCase.status === 4 && reviewerCase.proofRef === ZERO_BYTES32 && (
+                    <p className={styles.hint}>Case chưa có proof hợp lệ nên chỉ có thể từ chối hoàn tiền.</p>
+                  )}
+                  {reviewerCase.resolutionSent && (
+                    <p className={styles.actionNote} data-complete="true">
+                      Phán quyết đã được gửi. Ví nhận tiền có thể rút tại mục Số dư escrow trong tab Buyer hoặc Seller.
+                    </p>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          {activeTab !== 'reviewer' && (
+            <section id="escrow-balance" className={styles.panel}>
+              <h2>Số dư escrow</h2>
+              <div className={styles.balanceCard} aria-busy={loadingClaimable}>
+                <span>{address ? `Có thể rút về ví ${address.slice(0, 6)}…${address.slice(-4)}` : 'Kết nối ví nhận tiền'}</span>
+                <strong>{claimable === undefined ? '—' : `${formatEther(claimable)} AVAX`}</strong>
+              </div>
+              {claimableUnavailable && <p className={styles.hint}>Không đọc được số dư. Bấm Làm mới số dư để thử lại.</p>}
               <div className={styles.actions}>
                 <button
-                  className={styles.btnSecondary}
-                  disabled={busy || !reviewerCase || reviewerCase.status !== 1}
-                  onClick={() => handleReviewerAction('analyze')}
-                >
-                  1. Bắt đầu phân tích
-                </button>
-
-                <button
-                  className={styles.btnSecondary}
-                  disabled={busy || !reviewerCase || (reviewerCase.status !== 2 && reviewerCase.status !== 3)}
-                  onClick={() => handleReviewerAction('beginReview')}
-                >
-                  2. Chuyển vào Merchant Review
-                </button>
-
-                <button
-                  className={styles.btnAccent}
-                  disabled={busy || !reviewerCase || reviewerCase.status !== 4 || !reviewerCase.proofRef || reviewerCase.proofRef === zeroBytes32}
-                  onClick={() => handleReviewerAction('approve')}
-                >
-                  3. Duyệt hoàn tiền (Approve)
-                </button>
-
-                <button
-                  className={styles.btnSecondary}
-                  style={{ borderColor: '#e95048' }}
-                  disabled={busy || !reviewerCase || reviewerCase.status !== 4}
-                  onClick={() => handleReviewerAction('reject')}
-                >
-                  3. Từ chối (Reject)
-                </button>
-
-                <button
                   className={styles.btnPrimary}
-                  disabled={busy || !reviewerCase || (reviewerCase.status !== 5 && reviewerCase.status !== 6)}
-                  onClick={() => handleReviewerAction('sendResolution')}
+                  disabled={busy || loadingClaimable || !claimable || claimableUnavailable}
+                  onClick={handleWithdraw}
                 >
-                  4. Gửi phán quyết tới escrow
+                  Rút tiền (Withdraw)
+                </button>
+                <button
+                  className={styles.btnSecondary}
+                  disabled={busy || loadingClaimable || !address || zeroAddress(escrowAddress)}
+                  onClick={() => void refreshClaimable()}
+                >
+                  {loadingClaimable ? 'Đang đọc số dư…' : 'Làm mới số dư'}
                 </button>
               </div>
-              {!isReviewerWallet && (
-                <p className={styles.hint}>
-                  Các nút thao tác chỉ chạy khi ví hiện tại trùng địa chỉ reviewer on-chain. Đây là kiểm soát quyền ở
-                  contract, không phải nút ẩn trên UI.
-                </p>
-              )}
             </section>
           )}
 
@@ -2168,53 +2369,48 @@ export default function Day3Page() {
           </details>
         </div>
 
-        {/* Right Column: Live Audit Timeline & Explorer Links */}
-        <div>
-          <section className={styles.panel}>
-            <h2>
-              <span>Nhật ký giao dịch (Live Audit)</span>
+        <aside aria-label="Nhật ký và hướng dẫn">
+          <section className={`${styles.panel} ${styles.auditPanel}`} aria-labelledby="audit-heading">
+            <div className={styles.auditHeader}>
+              <h2 id="audit-heading">Nhật ký giao dịch</h2>
               <button
-                className={styles.btnSecondary}
-                style={{ padding: '0.2rem 0.6rem', fontSize: '0.8rem' }}
+                className={`${styles.btnSecondary} ${styles.smallButton}`}
+                disabled={!logs.length}
                 onClick={() => setLogs([])}
               >
-                Xóa
+                Xóa nhật ký
               </button>
-            </h2>
+            </div>
 
             {logs.length === 0 ? (
-              <p style={{ color: '#8fa5b0' }}>Chưa có sự kiện nào được ghi nhận.</p>
+              <p className={styles.emptyAudit}>Giao dịch và kết quả tra cứu sẽ hiện ở đây.</p>
             ) : (
-              <ul className={styles.timelineList}>
-                {logs.map((log, idx) => {
-                  const explorer = log.chainId ? EXPLORERS[log.chainId] : null;
+              <ol className={styles.timelineList} reversed tabIndex={0} aria-label="Lịch sử thao tác, mới nhất trước">
+                {logs.map((log) => {
+                  const explorer = log.chainId && log.chainId !== LOCAL_CHAIN_ID ? EXPLORERS[log.chainId] : null;
                   return (
-                    <li key={idx}>
-                      <span className={styles.stepNumber}>{logs.length - idx}</span>
-                      <strong style={{ color: '#83e8cc' }}>[{log.time}]</strong> {log.text}
-                      {log.txHash && explorer && (
-                        <div>
-                          <a
-                            href={explorer.txUrl(log.txHash)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className={styles.linkExplorer}
-                          >
-                            🔗 Xem trên {explorer.name} ↗
+                    <li key={log.id}>
+                      <span className={styles.stepNumber} aria-hidden="true">{log.id}</span>
+                      <div className={styles.auditEntry}>
+                        <time className={styles.auditTime}>{log.time}</time>
+                        <p>{log.text}</p>
+                        {log.txHash && <code className={styles.auditHash}>{log.txHash}</code>}
+                        {log.txHash && explorer && (
+                          <a href={explorer.txUrl(log.txHash)} target="_blank" rel="noreferrer" className={styles.linkExplorer}>
+                            Xem trên {explorer.name} ↗
                           </a>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </li>
                   );
                 })}
-              </ul>
+              </ol>
             )}
           </section>
 
-          {/* Quick Guide & Roles */}
-          <section className={styles.panel}>
-            <h2>Hướng dẫn thử nghiệm nhanh</h2>
-            <ol style={{ paddingLeft: '1.2rem', color: '#b4c0c7', lineHeight: 1.7 }}>
+          <details className={`${styles.panel} ${styles.quickGuide}`}>
+            <summary>Hướng dẫn thử nghiệm nhanh</summary>
+            <ol>
               <li>
                 <strong>Seller:</strong> kết nối ví Seller, mở tab Seller, nhập địa chỉ ví Buyer và ký quote.
               </li>
@@ -2234,8 +2430,8 @@ export default function Day3Page() {
                 <strong>Thẩm định:</strong> Reviewer tra cứu Case ID, nộp ZK proof, ký quyết định và áp dụng kết quả vào escrow.
               </li>
             </ol>
-          </section>
-        </div>
+          </details>
+        </aside>
       </div>
     </main>
   );
