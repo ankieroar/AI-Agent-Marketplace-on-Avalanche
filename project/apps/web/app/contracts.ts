@@ -37,13 +37,25 @@ export const DEFAULT_ADDRESSES = {
     resultSender: (process.env.NEXT_PUBLIC_L1_RESULT_SENDER || '0x0000000000000000000000000000000000000000') as `0x${string}`,
     verifier: '0x4e5FE516e05804bc27AE0a67d7Ce8750bd8aD955' as `0x${string}`, // Deployed Day 1 Verifier
   },
+  // Local deployments change on every Hardhat restart. The Day 3 page loads the
+  // real addresses from .runtime/day2/day2-local.json via /api/day3/config.
   local: {
-    serviceOrderManager: '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9' as `0x${string}`,
-    marketplaceGateway: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0' as `0x${string}`,
-    agentRegistry: '0x5FbDB2315678afecb367f032d93F642f64180aa3' as `0x${string}`,
-    disputeManager: '0x0165878A594ca255338adfa4d48449f69242Eb8F' as `0x${string}`,
-    resultSender: '0x2279B7A0a67E34842795B7304D12173F80210E1a' as `0x${string}`,
+    serviceOrderManager: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+    marketplaceGateway: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+    agentRegistry: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+    escrow: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+    disputeManager: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+    resultSender: '0x0000000000000000000000000000000000000000' as `0x${string}`,
   },
+};
+
+export type LocalAddresses = {
+  serviceOrderManager: `0x${string}`;
+  marketplaceGateway: `0x${string}`;
+  agentRegistry: `0x${string}`;
+  escrow: `0x${string}`;
+  disputeManager: `0x${string}`;
+  resultSender: `0x${string}`;
 };
 
 // --- ABIs ---
@@ -120,6 +132,30 @@ export const CASE_STATUS_LABELS: Record<number, string> = {
 
 export const DEFAULT_AGENT_ID = keccak256(stringToHex('document-summary'));
 export const DEFAULT_POLICY_VERSION = keccak256(stringToHex('document-summary-policy-v1'));
+
+export const serviceQuoteTypes = {
+  ServiceQuote: [
+    { name: 'orderId', type: 'bytes32' },
+    { name: 'agentId', type: 'bytes32' },
+    { name: 'policyCommitment', type: 'bytes32' },
+    { name: 'policyVersionHash', type: 'bytes32' },
+    { name: 'priceWei', type: 'uint256' },
+    { name: 'validUntil', type: 'uint64' },
+  ],
+} as const;
+
+export function serviceQuoteDomain(chainId: number, verifyingContract: `0x${string}`) {
+  return {
+    name: 'ServiceOrderManager',
+    version: '1',
+    chainId,
+    verifyingContract,
+  } as const;
+}
+
+export function zeroAddress(value: string) {
+  return /^0x0{40}$/i.test(value);
+}
 
 export function computeCaseId(sourceBlockchainId: `0x${string}`, gatewayAddress: `0x${string}`, orderId: `0x${string}`) {
   return keccak256(

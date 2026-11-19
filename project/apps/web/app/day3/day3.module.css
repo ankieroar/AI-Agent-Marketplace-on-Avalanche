@@ -349,6 +349,22 @@
   margin-right: 0.5rem;
 }
 
+.hint {
+  color: #8fa5b0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 0.5rem 0;
+}
+
+.hint code {
+  background: #11191f;
+  border: 1px solid #23343e;
+  border-radius: 5px;
+  padding: 0.05rem 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
 @media (max-width: 860px) {
   .grid {
     grid-template-columns: 1fr;

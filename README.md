@@ -4,6 +4,8 @@
 
 **Mốc ngày 2:** demo local đã qua kiểm thử marketplace, escrow, dispute, proof policy WASM, backend PostgreSQL và build frontend. Xem [hướng dẫn demo Day 2](project/README-DAY2.md). AI live chờ OpenRouter key, Teleporter chiều về và `bb` native vẫn là việc tồn đọng.
 
+**Mốc ngày 3 (Người 3 — sáng):** trang [Day 3](project/apps/web/app/day3/page.tsx) đã nối luồng ví thật Seller ký quote EIP-712 → Buyer mua/execute/accept-dispute → Reviewer đúng role nộp proof và duyệt trên Dispute L1 (local). Chi tiết và việc còn lại: [docs/DAY3-NGUOI3.md](project/docs/DAY3-NGUOI3.md). Deploy Fuji/L1 và chiều Teleporter về vẫn chờ Người 1/2.
+
 > **Trạng thái:** Tài liệu thiết kế và kế hoạch triển khai (**planned MVP**, không phải tuyên bố đã hoàn thành).  
 > **Nhóm:** 3 người · Hackathon 5 ngày · Ngôn ngữ tài liệu: Tiếng Việt.  
 > **Mạng thử nghiệm:** Avalanche **Fuji C-Chain** + một **Avalanche EVM L1 tùy chỉnh (Dispute L1)**.  

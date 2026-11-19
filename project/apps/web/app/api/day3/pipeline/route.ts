@@ -1,17 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 
-const pipelineRequestSchema = z.object({
-  text: z.string().min(1).max(30000),
-  claimTimestamp: z.string().regex(/^[0-9]+$/),
-  policy: z.object({
-    purchaseTimestamp: z.string(),
-    warrantyEndTimestamp: z.string(),
-    maxPayout: z.string(),
-    nonce: z.string(),
-  }),
-  apiKey: z.string().optional(),
-});
+type PipelineInput = {
+  text: string;
+  claimTimestamp: string;
+  policy: {
+    purchaseTimestamp: string;
+    warrantyEndTimestamp: string;
+    maxPayout: string;
+    nonce: string;
+  };
+};
+
+function parsePipeline(body: unknown): PipelineInput {
+  if (!body || typeof body !== 'object') throw new Error('Invalid schema');
+  const raw = body as Record<string, unknown>;
+  const policy = raw.policy;
+  if (typeof raw.text !== 'string' || raw.text.length < 1 || raw.text.length > 30000) {
+    throw new Error('Invalid schema');
+  }
+  if (typeof raw.claimTimestamp !== 'string' || !/^[0-9]+$/.test(raw.claimTimestamp)) {
+    throw new Error('Invalid schema');
+  }
+  if (!policy || typeof policy !== 'object') throw new Error('Invalid schema');
+  const fields = policy as Record<string, unknown>;
+  for (const key of ['purchaseTimestamp', 'warrantyEndTimestamp', 'maxPayout', 'nonce']) {
+    if (typeof fields[key] !== 'string' || !fields[key]) throw new Error('Invalid schema');
+  }
+  return {
+    text: raw.text,
+    claimTimestamp: raw.claimTimestamp,
+    policy: {
+      purchaseTimestamp: fields.purchaseTimestamp as string,
+      warrantyEndTimestamp: fields.warrantyEndTimestamp as string,
+      maxPayout: fields.maxPayout as string,
+      nonce: fields.nonce as string,
+    },
+  };
+}
 
 const prompts = {
   evidence: 'Extract purchaseDate (YYYY-MM-DD or null), faultDescription, missingEvidence (array). Do not invent absent facts.',
@@ -55,9 +80,8 @@ async function callOpenRouter(stage: 'evidence' | 'policy' | 'resolution', data:
 
 export async function POST(req: NextRequest) {
   try {
-    const json = await req.json();
-    const input = pipelineRequestSchema.parse(json);
-    const activeKey = input.apiKey || process.env.OPENROUTER_API_KEY;
+    const input = parsePipeline(await req.json());
+    const activeKey = process.env.OPENROUTER_API_KEY;
 
     if (activeKey) {
       // Live LLM Pipeline call via OpenRouter Free model
@@ -79,12 +103,46 @@ export async function POST(req: NextRequest) {
         activeKey
       );
 
+      // The model output is untrusted. Normalise the shape and never let the
+      // recommendation exceed the policy cap the escrow actually enforces.
+      const cap = BigInt(input.policy.maxPayout);
+      let proposed = 0n;
+      try {
+        proposed = BigInt(String((resolution as any)?.proposedPayout ?? '0'));
+      } catch {
+        proposed = 0n;
+      }
+      if (proposed > cap) proposed = cap;
+      if (proposed < 0n) proposed = 0n;
+
       return NextResponse.json({
         mode: 'openrouter_live',
         model: process.env.OPENROUTER_MODEL || 'openrouter/free',
-        evidence,
-        analysis,
-        resolution,
+        evidence: {
+          purchaseDate:
+            typeof (evidence as any)?.purchaseDate === 'string' ? (evidence as any).purchaseDate : null,
+          faultDescription:
+            typeof (evidence as any)?.faultDescription === 'string'
+              ? (evidence as any).faultDescription.slice(0, 2000)
+              : input.text.slice(0, 300),
+          missingEvidence: Array.isArray((evidence as any)?.missingEvidence)
+            ? ((evidence as any).missingEvidence as unknown[]).filter((v) => typeof v === 'string').slice(0, 10)
+            : [],
+        },
+        analysis: {
+          eligible: Boolean((analysis as any)?.eligible),
+          reasons: Array.isArray((analysis as any)?.reasons)
+            ? ((analysis as any).reasons as unknown[]).filter((v) => typeof v === 'string').slice(0, 10)
+            : [],
+        },
+        resolution: {
+          proposedPayout: proposed.toString(),
+          reason:
+            typeof (resolution as any)?.reason === 'string'
+              ? (resolution as any).reason.slice(0, 1000)
+              : 'Model không trả lý do.',
+          requiresHumanReview: true,
+        },
       });
     }
 
