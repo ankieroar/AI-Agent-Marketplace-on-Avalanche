@@ -180,7 +180,8 @@ export default function Day3Page() {
   // other chain's wallet state.
   const isLocal = !chain || chain.id === LOCAL_CHAIN_ID;
   const settlementChainId = isLocal ? LOCAL_CHAIN_ID : FUJI_CHAIN_ID;
-  const disputeChainId = isLocal ? LOCAL_CHAIN_ID : DISPUTE_CHAIN_ID;
+  const disputeChainId = isLocal ? LOCAL_CHAIN_ID :
+    process.env.NEXT_PUBLIC_DAY3_TRANSPORT === 'fuji-only' ? FUJI_CHAIN_ID : DISPUTE_CHAIN_ID;
   const settlementClient = usePublicClient({ chainId: settlementChainId });
   const disputeClient = usePublicClient({ chainId: disputeChainId });
   const { data: walletClient } = useWalletClient();
@@ -274,6 +275,25 @@ export default function Day3Page() {
 
   const [reviewerCase, setReviewerCase] = useState<CaseView | null>(null);
   const [proofJson, setProofJson] = useState('');
+  const [refundWei, setRefundWei] = useState('');
+  async function prepareCaseProof() {
+    if (!isHex32(caseId)) return;
+    setBusy(true);
+    try {
+      const response = await fetch('/api/day3/cases/' + caseId + '/prepare-proof', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(refundWei.trim() ? {refundWei:refundWei.trim()} : {}),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Không tạo được proof');
+      setProofJson(JSON.stringify({proof:result.proof,publicInputs:result.publicInputs}));
+      setFeedback({type:'success',message:'Đã tạo proof. Kiểm tra số tiền rồi ký nộp proof.'});
+    } catch (error) {
+      setFeedback({type:'error',message:errorText(error)});
+    } finally {
+      setBusy(false);
+    }
+  }
   const [claimable, setClaimable] = useState<bigint | null>(null);
 
   // --- Timeline & Operation Feeds ---
@@ -289,7 +309,6 @@ export default function Day3Page() {
   const isReviewerWallet = sameAddress(address, reviewerAddress);
   const isSellerWallet = !!address && sameAddress(address, listing?.seller);
   const onSettlementChain = chain?.id === settlementChainId;
-  const onDisputeChain = chain?.id === disputeChainId;
   const quoteForConnectedBuyer = !!signedQuote && sameAddress(signedQuote.buyer, address);
   const quoteDomainMatches =
     !!signedQuote && signedQuote.chainId === settlementChainId && sameAddress(signedQuote.orderManager, orderManagerAddress);
@@ -325,6 +344,20 @@ export default function Day3Page() {
       alive = false;
     };
   }, [isLocal]);
+
+  async function registerSummaryAgent() {
+    if (!walletClient || !settlementClient || !(await ensureChain(settlementChainId))) return;
+    setBusy(true);
+    try {
+      const hash = await walletClient.writeContract({address:agentRegistryAddress,abi:agentRegistryAbi,
+        functionName:'registerAgent',args:[DEFAULT_AGENT_ID,10000000000000000n,'document-summary',
+          keccak256(stringToHex('document-summary-policy-v1')),3600n]});
+      const receipt = await settlementClient.waitForTransactionReceipt({hash});
+      if (receipt.status !== 'success') throw new Error('Đăng ký listing thất bại');
+      await loadListing();
+    } catch (error) { setFeedback({type:'error',message:errorText(error)}); }
+    finally { setBusy(false); }
+  }
 
   // --- Load listing from AgentRegistry ---
   async function loadListing() {
@@ -903,6 +936,25 @@ export default function Day3Page() {
     }
   }
 
+  async function uploadBuyerEvidence() {
+    if (!isHex32(caseId) || !evidenceText.trim()) return;
+    setBusy(true);
+    try {
+      const id = caseId.toLowerCase();
+      const body = JSON.stringify({caseId:id,text:evidenceText.trim()});
+      const expires = String(Math.floor(Date.now()/1000)+240);
+      const scope = settlementChainId + ':' + orderManagerAddress.toLowerCase();
+      const message = ['Warranty Day 2 request',scope,'upload',id,expires,sha256(toBytes(body)).slice(2)].join('\n');
+      const signature = await signMessageAsync({message});
+      const response = await fetch('/api/day3/cases/upload',{method:'POST',body,
+        headers:{'Content-Type':'application/json','X-Wallet-Expires':expires,'X-Wallet-Signature':signature}});
+      const record = await response.json();
+      if (!response.ok) throw new Error(record.error || 'Không lưu được bằng chứng');
+      setFeedback({type:'success',message:'Đã lưu bằng chứng cho case. ID: '+record.id});
+    } catch (error) { setFeedback({type:'error',message:errorText(error)}); }
+    finally { setBusy(false); }
+  }
+
   // --- 5. Reviewer: Fetch case on Dispute L1 ---
   async function handleFetchCase(targetCaseId?: string) {
     const idToLook = (targetCaseId || caseId).trim().toLowerCase() as `0x${string}`;
@@ -1000,23 +1052,37 @@ export default function Day3Page() {
 
   // --- 7. Reviewer actions on Dispute L1 (wallet must be the reviewer role) ---
   async function handleSubmitProof() {
-    if (!walletClient || !caseId) return;
+    const id = caseId.trim().toLowerCase();
+    if (!walletClient || !disputeClient || zeroAddress(disputeManagerAddress)) {
+      setFeedback({ type: 'error', message: 'Kết nối ví reviewer và kiểm tra cấu hình DisputeManager trước khi nộp proof.' });
+      return;
+    }
     if (!isReviewerWallet) {
       setFeedback({ type: 'error', message: 'Ví hiện tại không phải reviewer của DisputeManager.' });
       return;
     }
+    if (!isHex32(id) || reviewerCase?.claim.caseId.toLowerCase() !== id || reviewerCase.status === 0) {
+      setFeedback({ type: 'error', message: 'Hãy tra cứu đúng Case ID trước khi nộp proof.' });
+      return;
+    }
+    if (reviewerCase.status !== 2) {
+      setFeedback({ type: 'error', message: 'Case phải ở trạng thái Analyzing. Nếu đang Opened, bấm Bắt đầu phân tích trước.' });
+      return;
+    }
     let parsed: { proof?: unknown; publicInputs?: unknown };
     try {
-      parsed = JSON.parse(proofJson) as { proof?: unknown; publicInputs?: unknown };
+      const value: unknown = JSON.parse(proofJson);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object');
+      parsed = value;
     } catch {
       setFeedback({ type: 'error', message: 'Proof JSON không parse được.' });
       return;
     }
-    if (typeof parsed.proof !== 'string' || !/^0x[0-9a-fA-F]+$/.test(parsed.proof)) {
+    if (typeof parsed.proof !== 'string' || !/^0x(?:[0-9a-fA-F]{2})+$/.test(parsed.proof)) {
       setFeedback({ type: 'error', message: 'proof phải là hex string 0x...' });
       return;
     }
-    if (!Array.isArray(parsed.publicInputs) || parsed.publicInputs.length !== 15) {
+    if (!Array.isArray(parsed.publicInputs) || parsed.publicInputs.length !== 15 || !parsed.publicInputs.every(isHex32)) {
       setFeedback({ type: 'error', message: 'publicInputs phải có đúng 15 phần tử như ProofGate.' });
       return;
     }
@@ -1036,12 +1102,13 @@ export default function Day3Page() {
         address: disputeManagerAddress,
         abi: disputeManagerAbi,
         functionName: 'submitProof',
-        args: [caseId as `0x${string}`, amount, nullifier, parsed.proof as `0x${string}`],
+        args: [id, amount, nullifier, parsed.proof as `0x${string}`],
       });
       addLog(`Reviewer nộp ZK proof (${formatEther(amount)} AVAX): ${txHash}`, txHash, disputeChainId);
-      await disputeClient!.waitForTransactionReceipt({ hash: txHash });
+      const receipt = await disputeClient.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') throw new Error('Giao dịch bị revert. Kiểm tra proof có thuộc đúng case và chưa được dùng.');
+      await handleFetchCase(id);
       setFeedback({ type: 'success', message: 'Proof đã được xác minh on-chain. Chuyển sang Merchant Review.' });
-      await handleFetchCase(caseId);
     } catch (error) {
       setFeedback({ type: 'error', message: 'Lỗi nộp proof: ' + errorText(error) });
     } finally {
@@ -1519,9 +1586,15 @@ export default function Day3Page() {
                     }
                     onClick={handleOpenDispute}
                   >
-                    ⚠️ Mở tranh chấp (Cross-Chain Dispute)
+                    Mở tranh chấp
                   </button>
                 </div>
+                {orderOnChain?.status === 4 && isHex32(caseId) && <div>
+                  <label>Bằng chứng của Buyer
+                    <textarea value={evidenceText} maxLength={30000} onChange={e=>setEvidenceText(e.target.value)}/>
+                  </label>
+                  <button disabled={busy || !evidenceText.trim()} onClick={uploadBuyerEvidence}>Ký và gửi bằng chứng</button>
+                </div>}
               </section>
             </>
           )}
@@ -1529,6 +1602,10 @@ export default function Day3Page() {
           {/* TAB 1.5: SELLER WORKSPACE */}
           {activeTab === 'seller' && (
             <section className={styles.panel}>
+              {listing && zeroAddress(listing.seller) && <button className={styles.btnPrimary}
+                disabled={busy || !walletClient} onClick={registerSummaryAgent}>
+                Đăng ký Document Summary · 0,01 AVAX · khiếu nại trong 1 giờ
+              </button>}
               <h2>
                 <span>Seller Workspace</span>
                 <span
@@ -1845,16 +1922,21 @@ export default function Day3Page() {
                   value={proofJson}
                   onChange={(e) => setProofJson(e.target.value)}
                 />
+                <label>Số tiền hoàn (wei, bỏ trống để dùng kết quả phân tích)
+                  <input value={refundWei} inputMode="numeric" onChange={e => setRefundWei(e.target.value)} />
+                </label>
+                <button disabled={busy || !isReviewerWallet || reviewerCase?.status !== 2}
+                  onClick={prepareCaseProof}>Tạo proof bằng WASM</button>
                 <div className={styles.actions}>
                   <button
                     className={styles.btnPrimary}
-                    disabled={busy || !caseId || !proofJson.trim() || !onDisputeChain}
+                    disabled={busy || !proofJson.trim()}
                     onClick={handleSubmitProof}
                   >
                     Nộp Proof
                   </button>
                 </div>
-                {!onDisputeChain && <p className={styles.hint}>Chuyển ví sang Dispute L1 trước khi nộp proof.</p>}
+                <p className={styles.hint}>Tra cứu case, bấm Bắt đầu phân tích, rồi nộp proof khi case ở trạng thái Analyzing.</p>
               </div>
 
               <div className={styles.actions}>

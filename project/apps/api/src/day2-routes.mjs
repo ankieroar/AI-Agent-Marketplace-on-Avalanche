@@ -1,12 +1,15 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
+import { serviceCommitment } from '../../../services/prover/service-policy-input.mjs';
+import { policyAad } from './seed-policy.mjs';
+import { persistCheckoutPolicy } from './checkout-policy.mjs';
 import { ethers } from 'ethers';
 import { z } from 'zod';
 import express from 'express';
 import { pool } from './db.mjs';
 import { encrypt } from './crypto.mjs';
 import { ApiError, day2Chain, day2CaseChain } from './day2-chain.mjs';
-import { chatWithModel } from '@warranty/agents';
-import { summaryInputSchema } from '@warranty/schema';
+import { chatWithModel, runPipeline } from '@warranty/agents';
+import { policySchema, summaryInputSchema } from '@warranty/schema';
 import { executeServiceOrder, saveBuyerServiceRequest } from './service-executor.mjs';
 import { prepareProof } from './prepare-proof.mjs';
 
@@ -55,6 +58,26 @@ async function saveOrder(order) {
 }
 
 export const day2Routes = express.Router();
+day2Routes.post('/dispute-preview',wrap(async(req,res)=>{
+  rateLimit(req.ip || 'local','dispute-preview');
+  const input=z.object({text:z.string().trim().min(1).max(30000),
+    claimTimestamp:z.string().regex(/^[0-9]+$/),policy:policySchema}).strict().parse(req.body);
+  res.json({mode:'openrouter_live',...await runPipeline(input)});
+}));
+day2Routes.post('/quote',wrap(async(req,res)=>{
+  rateLimit(req.ip || 'local','quote');
+  const positive = z.string().regex(/^[1-9][0-9]{0,38}$/);
+  const quote = z.object({orderId:hexId,agentId:hexId,policyVersionHash:hexId,
+    priceWei:positive,disputeWindow:positive.default('3600')}).strict().parse(req.body);
+  const witness = {disputeWindow:quote.disputeWindow,
+    maxRefund:String(BigInt(quote.priceWei)*3n/4n),nonce:'0x'+randomBytes(16).toString('hex')};
+  const commitment = serviceCommitment(quote.orderId,quote.policyVersionHash,witness);
+  await pool.query(`INSERT INTO pending_service_policies
+    (order_id,commitment,agent_id,policy_version_hash,ciphertext) VALUES($1,$2,$3,$4,$5)`,
+    [quote.orderId,commitment,quote.agentId,quote.policyVersionHash,
+      encrypt(witness,process.env.AES_KEY_HEX,policyAad(quote.orderId))]);
+  res.set('Cache-Control','no-store').json({orderId:quote.orderId,policyCommitment:commitment});
+}));
 day2Routes.post('/chat',wrap(async(req,res)=>{
   const body=chatInput.parse(req.body);
   const owner=req.ip || 'local';
@@ -76,6 +99,7 @@ day2Routes.get('/orders/:id',wrap(async (req,res)=>{
   const order=await chain.order(id);
   if(!order) throw new ApiError(404,'Confirmed order not found');
   await saveOrder(order);
+  await persistCheckoutPolicy(pool,order);
   const {rows:[job]}=await pool.query('SELECT status,result_hash,mode FROM agent_outputs WHERE order_id=$1',[id]);
   const {rows:[request]}=await pool.query(
     'SELECT source,input_hash,created_at FROM service_requests WHERE order_id=$1',[id]);

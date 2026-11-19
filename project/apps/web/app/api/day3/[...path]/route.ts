@@ -20,7 +20,7 @@ async function forward(request: Request, context: Context) {
       headers,
       body: write ? await request.text() : undefined,
       cache: 'no-store',
-      signal: AbortSignal.timeout(55_000),
+      signal: AbortSignal.timeout(prepareProof.test(route) ? 300_000 : 55_000),
     });
     return new Response(response.body, {
       status: response.status,

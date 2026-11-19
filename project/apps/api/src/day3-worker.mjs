@@ -169,6 +169,10 @@ async function prepareOrder({ orderId, chain, store, config }) {
   }
   const listing = await chain.listing(order.agentId);
   if (!listing) throw new PermanentWorkerError('Agent listing is not active/approved');
+  if (store.persistCheckoutPolicy) {
+    await store.saveOrder(order, order.buyer);
+    await store.persistCheckoutPolicy(order);
+  }
   const policyRow = await store.getPolicy(orderId);
   if (!policyRow) {
     // The purchase may be observed before the operator seeds the private
@@ -472,6 +476,10 @@ export async function processCaseJob({
 
   const order = await serviceChain.order(chainCase.orderId);
   if (!order) throw new PermanentWorkerError('Disputed order is not on the settlement chain');
+  if (store.persistCheckoutPolicy) {
+    await store.saveOrder(order, order.buyer);
+    await store.persistCheckoutPolicy(order);
+  }
   const policyRow = await store.getPolicy(chainCase.orderId);
   if (!policyRow) {
     // Seeding may lag the relayed case; keep the job retryable instead of

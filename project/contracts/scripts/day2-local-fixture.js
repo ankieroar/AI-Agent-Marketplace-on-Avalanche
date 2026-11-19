@@ -11,7 +11,7 @@ const quoteTypes = {
   ],
 };
 
-async function deployDay2({policyCommitmentFor, verifierName = "MockServicePolicyVerifier"} = {}) {
+async function deployDay2({policyCommitmentFor, verifierName = "MockServicePolicyVerifier", sameChain = false} = {}) {
   if (!["hardhat", "localhost"].includes(hre.network.name)) throw new Error("Demo is local only");
   const { ethers } = hre;
   const { chainId } = await ethers.provider.getNetwork();
@@ -27,9 +27,9 @@ async function deployDay2({policyCommitmentFor, verifierName = "MockServicePolic
 
   const send = async (transaction) => (await transaction).wait();
   const source = ethers.id("local-fuji");
-  const dispute = ethers.id("local-dispute-l1");
-  const fujiMessenger = await deploy("V2MockMessenger");
-  const l1Messenger = await ethers.deployContract("V2MockMessenger");
+  const dispute = sameChain ? source : ethers.id("local-dispute-l1");
+  const fujiMessenger = sameChain ? await deploy("FujiDisputeMessenger", source) : await deploy("V2MockMessenger");
+  const l1Messenger = sameChain ? fujiMessenger : await ethers.deployContract("V2MockMessenger");
   await l1Messenger.waitForDeployment();
   const agents = await deploy("AgentRegistry");
   const policies = await deploy("MerchantPolicyRegistry");
@@ -79,8 +79,10 @@ async function deployDay2({policyCommitmentFor, verifierName = "MockServicePolic
 
   async function open(id) {
     await send(gateway.connect(buyer).openCase(id));
-    const payload = await fujiMessenger.lastPayload();
-    await send(l1Messenger.deliver(inbox, source, gateway, payload));
+    if (!sameChain) {
+      const payload = await fujiMessenger.lastPayload();
+      await send(l1Messenger.deliver(inbox, source, gateway, payload));
+    }
     return (await orders.orders(id)).caseId;
   }
 

@@ -78,6 +78,11 @@ export function createPostgresStore(pool) {
       [order.orderId, buyer, order]);
     },
 
+    async persistCheckoutPolicy(order) {
+      const { persistCheckoutPolicy } = await import('./checkout-policy.mjs');
+      await persistCheckoutPolicy(pool, order);
+    },
+
     async getPolicy(orderId) {
       const { rows: [row] } = await pool.query(`SELECT order_id, agent_id,
         policy_version_hash, commitment, ciphertext, source, checkout_tx_hash

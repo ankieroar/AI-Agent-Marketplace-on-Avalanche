@@ -46,6 +46,7 @@ const prompts = {
 
 async function callOpenRouter(stage: 'evidence' | 'policy' | 'resolution', data: any, apiKey: string) {
   const model = process.env.OPENROUTER_MODEL || 'openrouter/free';
+  if (model !== 'openrouter/free' && !model.endsWith(':free')) throw new Error('Chỉ dùng model OpenRouter miễn phí');
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     signal: AbortSignal.timeout(45000),
@@ -81,6 +82,13 @@ async function callOpenRouter(stage: 'evidence' | 'policy' | 'resolution', data:
 export async function POST(req: NextRequest) {
   try {
     const input = parsePipeline(await req.json());
+    if (process.env.NEXT_PUBLIC_DAY3_TRANSPORT === 'fuji-only') {
+      const response = await fetch('http://127.0.0.1:3001/api/dispute-preview', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(input),
+        cache:'no-store', signal:AbortSignal.timeout(280000),
+      });
+      return new Response(response.body,{status:response.status,headers:{'Content-Type':'application/json'}});
+    }
     const activeKey = process.env.OPENROUTER_API_KEY;
 
     if (activeKey) {

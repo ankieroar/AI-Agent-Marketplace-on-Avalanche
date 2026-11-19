@@ -22,14 +22,16 @@ const quoteTypes = {
 };
 
 describe("Day 3 deployment and two-domain wiring", function () {
-  async function fixture() {
+  async function fixture(sameChain = false) {
     const [admin, seller, buyer, reviewer, outsider] = await ethers.getSigners();
     const { chainId } = await ethers.provider.getNetwork();
     const sourceBytes32 = ethers.id("test-fuji-c-chain");
-    const disputeBytes32 = ethers.id("test-dispute-l1");
+    const disputeBytes32 = sameChain ? sourceBytes32 : ethers.id("test-dispute-l1");
 
-    const fujiMessenger = await (await ethers.deployContract("V2MockMessenger")).waitForDeployment();
-    const l1Messenger = await (await ethers.deployContract("V2MockMessenger")).waitForDeployment();
+    const fujiMessenger = await (sameChain
+      ? await ethers.deployContract("FujiDisputeMessenger", [sourceBytes32])
+      : await ethers.deployContract("V2MockMessenger")).waitForDeployment();
+    const l1Messenger = sameChain ? fujiMessenger : await (await ethers.deployContract("V2MockMessenger")).waitForDeployment();
 
     const fujiManifest = emptyManifest({
       role: "fuji", network: "hardhat", chainId: Number(chainId),
@@ -143,6 +145,22 @@ describe("Day 3 deployment and two-domain wiring", function () {
     });
     expect(this.fujiManifest.wiring.length).to.equal(wiringBefore);
     expect(this.fujiManifest.wiring.every(item => item.status === "already-set")).to.equal(true);
+  });
+
+  it("settles a dispute synchronously on the same chain and credits escrow once", async function () {
+    const {fuji,l1,buyer,seller,reviewer,buy,price,send} = await fixture(true);
+    const {orderId} = await buy("single-chain-order");
+    await send(fuji.gateway.connect(buyer).openCase(orderId));
+    const {caseId} = await fuji.orders.orders(orderId);
+    expect((await l1.manager.getCase(caseId)).status).to.equal(1n);
+    const review = l1.manager.connect(reviewer);
+    await send(review.startAnalysis(caseId));
+    await send(review.beginReview(caseId));
+    await send(review.decide(caseId,false,ethers.id("review")));
+    await send(l1.sender.connect(reviewer).sendResolution(caseId));
+    expect((await fuji.orders.orders(orderId)).status).to.equal(5n);
+    expect(await fuji.escrow.claimable(seller.address)).to.equal(price);
+    await expect(l1.sender.connect(reviewer).sendResolution(caseId)).to.be.reverted;
   });
 
   it("locks escrow and applies a reviewer reject resolution over the authenticated relay", async function () {

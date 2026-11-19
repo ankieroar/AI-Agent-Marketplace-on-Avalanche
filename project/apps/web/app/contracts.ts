@@ -81,6 +81,7 @@ export const agentRegistryAbi = parseAbi([
   'struct Listing { address seller; uint256 priceWei; string metadataURI; bytes32 policyVersionHash; uint64 disputeWindow; bool active; }',
   'function getAgent(bytes32 agentId) view returns (Listing)',
   'function approvedSeller(address seller) view returns (bool)',
+  'function registerAgent(bytes32 agentId,uint256 priceWei,string uri,bytes32 version,uint64 window)',
 ]);
 
 export const disputeManagerAbi = parseAbi([
