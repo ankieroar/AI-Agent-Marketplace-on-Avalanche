@@ -142,8 +142,10 @@ export async function day2CaseChain() {
       process.env.DAY3_L1_MANIFEST || process.env.DAY2_CONTRACTS_FILE || manifestFile, 'utf8'));
     return await createChain({
       manifest,
-      rpcUrl: process.env.DAY3_L1_RPC_URL || process.env.DISPUTE_L1_RPC_URL
-        || process.env.DAY2_RPC_URL || 'http://127.0.0.1:8545',
+      rpcUrl: Number(manifest.chainId) === 31337
+        ? process.env.DAY2_RPC_URL || 'http://127.0.0.1:8545'
+        : process.env.DAY3_L1_RPC_URL || process.env.DISPUTE_L1_RPC_URL
+          || process.env.DAY2_RPC_URL || 'http://127.0.0.1:8545',
       confirmations: Number(process.env.DAY3_L1_CONFIRMATIONS
         || process.env.DAY2_CONFIRMATIONS || 1),
     });

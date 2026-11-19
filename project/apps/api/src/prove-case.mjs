@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { ethers } from 'ethers';
 import { day2Chain } from './day2-chain.mjs';
+import { verifyCaseClaim } from './day3-events.mjs';
 import { proveServicePolicy } from '../../../services/prover/day2.mjs';
 
 try {
@@ -13,9 +14,11 @@ try {
   if (!order || order.caseId!==caseId.toLowerCase() || order.status!==4 || BigInt(amount)>BigInt(order.priceWei)) {
     throw new Error('Case is not backed by the disputed order or payout exceeds escrow');
   }
-  const {status,...claim}=item;
   const policy=JSON.parse(await readFile(policyFile,'utf8'));
-  const data=await proveServicePolicy(claim,policy,amount);
+  const { claim, witness } = verifyCaseClaim({
+    claim: item, policy, order, caseStatus: item.status, allowedStatuses: [1, 2, 3],
+  });
+  const data=await proveServicePolicy(claim,witness,amount);
   process.stdout.write(JSON.stringify(data));
 } catch(error) {
   console.error(error.message);

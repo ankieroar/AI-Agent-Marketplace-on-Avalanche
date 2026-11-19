@@ -168,10 +168,10 @@ Trường hợp bất khả kháng hoặc thiếu dữ liệu đầu vào cần 
 
 export default function Day3Page() {
   // --- Wallet & Chain State ---
-  const { address, isConnected, chain } = useAccount();
+  const { address, isConnected, chain, chainId } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
-  const { switchChain, switchChainAsync } = useSwitchChain();
+  const { switchChainAsync } = useSwitchChain();
   const { signMessageAsync } = useSignMessage();
   const { signTypedDataAsync } = useSignTypedData();
 
@@ -187,7 +187,11 @@ export default function Day3Page() {
   const { data: walletClient } = useWalletClient();
 
   const [runtimeAddresses, setRuntimeAddresses] = useState<Partial<LocalAddresses> | null>(null);
+  const [runtimeTransport, setRuntimeTransport] = useState<'same-chain' | 'relay'>('relay');
   const [runtimeError, setRuntimeError] = useState('');
+  const sameChainDispute = isLocal
+    ? runtimeTransport === 'same-chain'
+    : settlementChainId === disputeChainId;
 
   // --- UI & Role Mode ---
   const [activeRole, setActiveRole] = useState<Role>('buyer');
@@ -320,6 +324,7 @@ export default function Day3Page() {
   useEffect(() => {
     if (!isLocal) {
       setRuntimeAddresses(null);
+      setRuntimeTransport('relay');
       setRuntimeError('');
       return;
     }
@@ -328,16 +333,18 @@ export default function Day3Page() {
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Không đọc được manifest local');
-        return data as { addresses: Partial<LocalAddresses> };
+        return data as { addresses: Partial<LocalAddresses>; transport?: 'same-chain' | 'relay' };
       })
       .then((data) => {
         if (!alive) return;
         setRuntimeAddresses(data.addresses);
+        setRuntimeTransport(data.transport ?? 'relay');
         setRuntimeError('');
       })
       .catch((error: unknown) => {
         if (!alive) return;
         setRuntimeAddresses(null);
+        setRuntimeTransport('relay');
         setRuntimeError(errorText(error));
       });
     return () => {
@@ -500,13 +507,22 @@ export default function Day3Page() {
 
   // --- Chain switch helper: switching is asynchronous, so never send a tx in
   // the same tick on the wrong chain. Ask the user to press the action again.
-  async function ensureChain(target: number) {
-    if (chain?.id === target) return true;
+  async function ensureChain(target: number, retryAction = true) {
+    if (!isConnected) {
+      setFeedback({ type: 'error', message: 'Kết nối ví trước khi chuyển mạng.' });
+      return false;
+    }
+    if (chainId === target) return true;
     try {
       await switchChainAsync({ chainId: target });
-      setFeedback({ type: 'info', message: 'Đã chuyển mạng. Bấm lại thao tác để gửi giao dịch.' });
+      setFeedback({ type: 'info', message: retryAction
+        ? 'Đã chuyển mạng. Bấm lại thao tác để gửi giao dịch.'
+        : 'Đã chuyển mạng.' });
     } catch (error) {
-      setFeedback({ type: 'error', message: 'Không chuyển được mạng: ' + errorText(error) });
+      const message = errorText(error);
+      setFeedback({ type: 'error', message: target === LOCAL_CHAIN_ID
+        ? `Không chuyển được mạng: ${message}. Mở Core, chọn Hardhat Local hoặc thêm RPC http://127.0.0.1:8545, Chain ID 31337, ký hiệu ETH.`
+        : 'Không chuyển được mạng: ' + message });
     }
     return false;
   }
@@ -710,6 +726,7 @@ export default function Day3Page() {
       addLog(`Đã gửi purchaseService: ${txHash}`, txHash, settlementChainId);
       setFeedback({ type: 'info', message: 'Đang chờ block xác nhận...' });
       const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') throw new Error('Giao dịch mua đã bị revert.');
       setOrderIdState(signedQuote.orderId);
       addLog(`Order đã tạo thành công: ${signedQuote.orderId}`, receipt.transactionHash, settlementChainId);
       setFeedback({ type: 'success', message: `Đã mua dịch vụ. Order ID: ${signedQuote.orderId}` });
@@ -729,8 +746,9 @@ export default function Day3Page() {
 
   // --- 2. Execute AI Service via real backend API ---
   async function handleExecuteService() {
-    if (!orderId) {
-      setFeedback({ type: 'error', message: 'Cần có Order ID để chạy AI Service.' });
+    const id = orderId.trim().toLowerCase();
+    if (!isHex32(id)) {
+      setFeedback({ type: 'error', message: 'Nhập Order ID hợp lệ của đơn đã mua để chạy AI Service.' });
       return;
     }
     if (!address) {
@@ -738,22 +756,29 @@ export default function Day3Page() {
       return;
     }
     setBusy(true);
-    setFeedback({ type: 'info', message: 'Đang ký yêu cầu xác thực bằng ví Buyer...' });
+    setFeedback({ type: 'info', message: 'Đang kiểm tra đơn đã mua...' });
     setAiResult(null);
 
     try {
       // The backend scope uses the settlement chain id even when the wallet is
       // currently focused on the Dispute L1.
       const scope = `${settlementChainId}:${orderManagerAddress.toLowerCase()}`;
+      const lookup = await fetch(`/api/day3/orders/${id}`, { cache: 'no-store' });
+      const order = await lookup.json();
+      if (lookup.status === 404) throw new Error('Chưa tìm thấy đơn đã mua. Hãy hoàn tất Mua dịch vụ hoặc nhập đúng Order ID của đơn đã xác nhận.');
+      if (!lookup.ok) throw new Error(order.error || 'Không kiểm tra được đơn qua backend.');
+      if (order.scope !== scope) throw new Error('Web và backend đang dùng khác mạng hoặc địa chỉ ServiceOrderManager.');
+      if (!sameAddress(order.buyer, address)) throw new Error('Hãy kết nối đúng ví Buyer của đơn này.');
+      setFeedback({ type: 'info', message: 'Đang ký yêu cầu xác thực bằng ví Buyer...' });
       const body = JSON.stringify({ text: documentText.trim() });
       const expires = Math.floor(Date.now() / 1000) + 240;
       const digest = sha256(toBytes(body)).slice(2);
-      const message = ['Warranty Day 2 request', scope, 'execute', orderId.toLowerCase(), String(expires), digest].join('\n');
+      const message = ['Warranty Day 2 request', scope, 'execute', id, String(expires), digest].join('\n');
 
       const signature = await signMessageAsync({ message });
       addLog('Đã ký xác thực ví Buyer. Đang gọi Backend Service Agent runtime...');
 
-      const res = await fetch(`/api/day3/orders/${orderId.toLowerCase()}/execute`, {
+      const res = await fetch(`/api/day3/orders/${id}/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -776,7 +801,7 @@ export default function Day3Page() {
         mode: data.mode,
         hash: data.resultHash,
       });
-      setSellerResultHash((prev) => prev || data.resultHash);
+      setSellerResultHash(data.resultHash);
 
       addLog(`Service Agent hoàn tất phân tích (Mode: ${data.mode})`);
       setFeedback({ type: 'success', message: 'Service Agent đã trả kết quả phân tích có cấu trúc!' });
@@ -810,9 +835,10 @@ export default function Day3Page() {
         args: [orderId as `0x${string}`, sellerResultHash as `0x${string}`],
       });
       addLog(`Seller gửi markDelivered: ${txHash}`, txHash, settlementChainId);
-      await settlementClient!.waitForTransactionReceipt({ hash: txHash });
-      setFeedback({ type: 'success', message: 'Đã đánh dấu Delivered. Buyer có thể Accept hoặc Dispute.' });
+      const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') throw new Error('Giao dịch bàn giao bị revert.');
       await fetchOrder();
+      setFeedback({ type: 'success', message: 'Đã đánh dấu Delivered. Buyer có thể Accept hoặc Dispute.' });
     } catch (error) {
       setFeedback({ type: 'error', message: 'Lỗi markDelivered: ' + errorText(error) });
     } finally {
@@ -832,7 +858,8 @@ export default function Day3Page() {
         functionName: 'withdraw',
       });
       addLog(`Rút tiền từ escrow: ${txHash}`, txHash, settlementChainId);
-      await settlementClient!.waitForTransactionReceipt({ hash: txHash });
+      const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') throw new Error('Giao dịch rút tiền bị revert.');
       await loadClaimable();
       setFeedback({ type: 'success', message: 'Đã rút tiền về ví.' });
     } catch (error) {
@@ -864,13 +891,14 @@ export default function Day3Page() {
         args: [orderId as `0x${string}`],
       });
       addLog(`Buyer gửi lệnh Accept: ${txHash}`, txHash, settlementChainId);
-      await settlementClient!.waitForTransactionReceipt({ hash: txHash });
+      const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') throw new Error('Giao dịch Accept bị revert.');
       addLog('Escrow đã ghi số dư cho Seller. Seller cần gọi withdraw().', undefined, settlementChainId);
+      await fetchOrder();
       setFeedback({
         type: 'success',
         message: 'Buyer đã chấp nhận kết quả. Escrow ghi có cho Seller; Seller rút bằng nút trong tab Seller.',
       });
-      await fetchOrder();
     } catch (error) {
       setFeedback({ type: 'error', message: 'Lỗi khi Accept order: ' + errorText(error) });
     } finally {
@@ -902,6 +930,7 @@ export default function Day3Page() {
       });
       addLog(`Giao dịch mở dispute đã gửi: ${txHash}`, txHash, settlementChainId);
       const receipt = await settlementClient!.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') throw new Error('Giao dịch mở tranh chấp bị revert.');
 
       let opened: string | null = null;
       for (const log of receipt.logs) {
@@ -920,15 +949,17 @@ export default function Day3Page() {
       }
       if (opened) {
         setCaseId(opened);
-        addLog(`CaseOpened: ${opened}. Thông điệp đang chờ Teleporter relay sang Dispute L1.`, receipt.transactionHash, settlementChainId);
+        addLog(`CaseOpened: ${opened}`, receipt.transactionHash, settlementChainId);
       } else {
         addLog('Đã mở case nhưng không giải mã được CaseOpened. Tra cứu thủ công theo Order ID.', receipt.transactionHash, settlementChainId);
       }
+      await fetchOrder();
       setFeedback({
         type: 'success',
-        message: 'Đã mở khiếu nại. Thông điệp đang chờ relay sang Dispute L1; trạng thái trên L1 chỉ xuất hiện sau khi relay xác nhận.',
+        message: sameChainDispute
+          ? 'Đã mở khiếu nại. Reviewer có thể tra cứu case trên cùng mạng.'
+          : 'Đã mở khiếu nại. Chờ Teleporter chuyển case sang Dispute L1.',
       });
-      await fetchOrder();
     } catch (error) {
       setFeedback({ type: 'error', message: 'Lỗi khi mở dispute: ' + errorText(error) });
     } finally {
@@ -1175,12 +1206,15 @@ export default function Day3Page() {
           functionName: 'sendResolution',
           args: [cId],
         });
-        addLog(`Gửi phán quyết qua Teleporter về C-Chain: ${txHash}`, txHash, disputeChainId);
+        addLog(sameChainDispute ? 'Gửi phán quyết tới escrow' : 'Gửi phán quyết qua Teleporter', txHash, disputeChainId);
       }
 
-      await disputeClient!.waitForTransactionReceipt({ hash: txHash });
-      setFeedback({ type: 'success', message: `Thao tác [${action}] trên Dispute L1 thành công!` });
+      const receipt = await disputeClient!.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') throw new Error('Giao dịch reviewer bị revert.');
       await handleFetchCase(caseId);
+      setFeedback({ type: 'success', message: action === 'sendResolution' && sameChainDispute
+        ? 'Escrow đã ghi nhận phán quyết. Đổi sang ví nhận tiền để rút.'
+        : `Đã xác nhận thao tác [${action}] trên chain.` });
     } catch (error) {
       setFeedback({ type: 'error', message: `Lỗi thao tác reviewer: ` + errorText(error) });
     } finally {
@@ -1222,7 +1256,7 @@ export default function Day3Page() {
             }`}
           >
             <span className={styles.indicator} />
-            {chain?.name || 'Chưa kết nối ví'} ({chain?.id || 'N/A'})
+            {chain?.name || (isConnected ? 'Mạng ví chưa được hỗ trợ' : 'Chưa kết nối ví')} ({chainId ?? 'N/A'})
           </span>
 
           {isConnected ? (
@@ -1244,21 +1278,21 @@ export default function Day3Page() {
           <button
             className={styles.btnSecondary}
             disabled={chain?.id === FUJI_CHAIN_ID}
-            onClick={() => switchChain({ chainId: FUJI_CHAIN_ID })}
+            onClick={() => void ensureChain(FUJI_CHAIN_ID, false)}
           >
             Fuji (43113)
           </button>
           <button
             className={styles.btnSecondary}
             disabled={chain?.id === DISPUTE_CHAIN_ID}
-            onClick={() => switchChain({ chainId: DISPUTE_CHAIN_ID })}
+            onClick={() => void ensureChain(DISPUTE_CHAIN_ID, false)}
           >
             Dispute L1 (662831)
           </button>
           <button
             className={styles.btnSecondary}
             disabled={chain?.id === LOCAL_CHAIN_ID}
-            onClick={() => switchChain({ chainId: LOCAL_CHAIN_ID })}
+            onClick={() => void ensureChain(LOCAL_CHAIN_ID, false)}
           >
             Local (31337)
           </button>
@@ -1612,7 +1646,11 @@ export default function Day3Page() {
                   className={styles.badge}
                   style={{ background: isSellerWallet ? '#132f30' : '#2a1e1e', color: isSellerWallet ? '#83e8cc' : '#ff867d' }}
                 >
-                  {isSellerWallet ? 'Ví Seller hợp lệ' : 'Ví không phải Seller'}
+                  {listingBusy ? 'Đang đọc listing' :
+                    !listing ? 'Chưa xác định Seller' :
+                    zeroAddress(listing.seller) ? 'Chưa có Seller' :
+                    !address ? 'Chưa kết nối ví' :
+                    isSellerWallet ? 'Ví Seller hợp lệ' : 'Ví không phải Seller'}
                 </span>
               </h2>
               <p>
@@ -1640,6 +1678,7 @@ export default function Day3Page() {
                 </div>
               </div>
 
+              {listingError && <p role="status">{listingError}</p>}
               <h3>1. Ký quote cho Buyer</h3>
               <label className={styles.label}>Địa chỉ ví Buyer:</label>
               <input
@@ -1978,7 +2017,7 @@ export default function Day3Page() {
                   disabled={busy || !reviewerCase || (reviewerCase.status !== 5 && reviewerCase.status !== 6)}
                   onClick={() => handleReviewerAction('sendResolution')}
                 >
-                  4. Gửi kết quả về Fuji (Teleporter)
+                  {sameChainDispute ? '4. Gửi phán quyết tới escrow' : '4. Gửi kết quả về Fuji (Teleporter)'}
                 </button>
               </div>
               {!isReviewerWallet && (

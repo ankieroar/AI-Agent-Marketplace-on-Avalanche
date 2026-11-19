@@ -27,6 +27,7 @@ export async function GET() {
   try {
     const manifest = JSON.parse(await readFile(file, 'utf8')) as {
       chainId?: number;
+      transport?: string;
       contracts?: Record<string, { address?: string }>;
     };
     if (!manifest.contracts) throw new Error('missing contracts');
@@ -35,12 +36,13 @@ export async function GET() {
       const address = manifest.contracts[name]?.address;
       if (typeof address === 'string' && /^0x[0-9a-fA-F]{40}$/.test(address)) addresses[key] = address;
     }
-    return NextResponse.json({ chainId: manifest.chainId ?? 31337, addresses, source: file }, {
+    return NextResponse.json({ chainId: manifest.chainId ?? 31337, addresses,
+      transport: manifest.transport === 'same-chain' ? 'same-chain' : 'relay', source: file }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch {
     return NextResponse.json(
-      { error: 'Chưa có manifest Day 2. Chạy: npx.cmd hardhat run scripts/day2-prepare-api.js --network localhost' },
+      { error: 'Chưa có deployment local. Chạy npx.cmd hardhat run scripts/day3-prepare-local.js --network localhost trong thư mục contracts.' },
       { status: 404, headers: { 'Cache-Control': 'no-store' } },
     );
   }

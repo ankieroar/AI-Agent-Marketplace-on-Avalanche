@@ -55,6 +55,7 @@ async function saveOrder(order) {
   await pool.query(`INSERT INTO service_orders(order_id,buyer,snapshot) VALUES($1,$2,$3)
     ON CONFLICT(order_id) DO UPDATE SET snapshot=excluded.snapshot, updated_at=now()`,
   [order.orderId,order.buyer,order]);
+  await persistCheckoutPolicy(pool,order);
 }
 
 export const day2Routes = express.Router();
@@ -99,7 +100,6 @@ day2Routes.get('/orders/:id',wrap(async (req,res)=>{
   const order=await chain.order(id);
   if(!order) throw new ApiError(404,'Confirmed order not found');
   await saveOrder(order);
-  await persistCheckoutPolicy(pool,order);
   const {rows:[job]}=await pool.query('SELECT status,result_hash,mode FROM agent_outputs WHERE order_id=$1',[id]);
   const {rows:[request]}=await pool.query(
     'SELECT source,input_hash,created_at FROM service_requests WHERE order_id=$1',[id]);
