@@ -4,7 +4,7 @@
 
 **Mốc ngày 2:** demo local đã qua kiểm thử marketplace, escrow, dispute, proof policy WASM, backend PostgreSQL và build frontend. Xem [hướng dẫn demo Day 2](project/README-DAY2.md). AI live chờ OpenRouter key, Teleporter chiều về và `bb` native vẫn là việc tồn đọng.
 
-**Mốc ngày 3 (Người 3 — sáng):** trang [Day 3](project/apps/web/app/day3/page.tsx) đã nối luồng ví thật Seller ký quote EIP-712 → Buyer mua/execute/accept-dispute → Reviewer đúng role nộp proof và duyệt trên Dispute L1 (local). Chi tiết và việc còn lại: [docs/DAY3-NGUOI3.md](project/docs/DAY3-NGUOI3.md). Deploy Fuji/L1 và chiều Teleporter về vẫn chờ Người 1/2.
+**Mốc ngày 3 (Người 2 + Người 3 — sáng):** trang [Day 3](project/apps/web/app/day3/page.tsx) đã nối luồng ví thật Seller ký quote EIP-712 → Buyer mua/execute/accept-dispute → Reviewer đúng role nộp proof và duyệt trên Dispute L1 (local). Người 2 hoàn tất worker backend (`ServicePurchased` → executor, case L1 → Evidence/Policy/Resolution → prover → submit), seed policy từ checkout thật và API `POST /api/cases/:id/prepare-proof`; chi tiết tại [docs/DAY3-NGUOI2.md](project/docs/DAY3-NGUOI2.md). Việc còn lại của UI: [docs/DAY3-NGUOI3.md](project/docs/DAY3-NGUOI3.md). Deploy Fuji/L1, chiều Teleporter về và chạy staging thật vẫn chờ hạ tầng; không dùng mock làm bằng chứng on-chain.
 
 **Mốc ngày 3 (Người 1 — sáng):** deploy script hai miền + allowlist Teleporter + manifest/ABI đã sẵn sàng; local chạy thật 20 assertion và verify 45/45 mối nối. Chi tiết: [docs/DAY3-NGUOI1.md](project/docs/DAY3-NGUOI1.md). Giao dịch Fuji/L1 thật chờ ví testnet có AVAX.
 

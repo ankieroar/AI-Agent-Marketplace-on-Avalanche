@@ -90,7 +90,7 @@ Luồng thao tác:
 
 ## Việc còn lại (không thuộc sáng Ngày 3 của Người 3)
 
-- **Endpoint `POST /api/cases/:id/prepare-proof`** do Người 2 làm; hiện UI cho dán proof JSON thay vì tự gọi prover.
+- **Endpoint `POST /api/cases/:id/prepare-proof` đã có** (`POST /api/day3/cases/:id/prepare-proof` qua proxy Next.js); UI hiện vẫn cho dán proof JSON, có thể gọi endpoint này để điền tự động. Xem `docs/DAY3-NGUOI2.md`.
 - **`policies.json` chỉ là demo local, chưa mã hóa**. Production phải lưu AES-256-GCM, chỉ prover/API đọc.
 - **Địa chỉ Fuji/Dispute L1** phải được deploy và điền `NEXT_PUBLIC_FUJI_*` / `NEXT_PUBLIC_L1_*` (Người 1).
 - **Chiều Teleporter L1 → Fuji** và relayer vẫn là blocker hạ tầng đã ghi trong `docs/DAY1-REPORT.md`.

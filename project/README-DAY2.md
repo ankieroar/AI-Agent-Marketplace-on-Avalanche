@@ -119,6 +119,52 @@ node --env-file=.env tests/day2-api-smoke.mjs
 
 Chạy fixture mới trước khi chuyển một order đã có kết quả từ mock sang provider thật. Với cùng order và cùng input, backend trả kết quả đã lưu. Trạng thái `DELIVERED` từ executor là trạng thái lưu ở DB. Seller vẫn gọi `markDelivered` trên chain với `resultHash` nếu cần cập nhật trạng thái contract.
 
+### Seed agent và chính sách service trên staging
+
+Script seed chỉ nhận **checkout thật**: nó đọc order và `policyCommitment` đã ghi bởi `purchaseService` trên chain, tự tính lại commitment BLAKE2s từ witness (cùng thuật toán với circuit Noir), và **dừng nếu hai giá trị không khớp**. Không có đường tắt mock: `DAY2_CHAIN_MODE=mock` bị từ chối.
+
+```powershell
+cd project
+npm.cmd run migrate -w @warranty/api
+npm.cmd run seed:staging
+```
+
+Trước khi chạy, cần có manifest + fixture do `scripts/day2-prepare-api.js` tạo trong `.runtime/day2/`, policy witness `.runtime/day2/day2-mock-policy.json`, và `DATABASE_URL`/`AES_KEY_HEX` trong `project/.env`. Với staging, trỏ `DAY2_RPC_URL` và `DAY2_CONTRACTS_FILE`/`DATABASE_URL` sang môi trường staging bằng account quyền tối thiểu; không commit `.env`. Nếu DB remote cần TLS, thêm `?sslmode=require` vào `DATABASE_URL`. Account ứng dụng chỉ cần `SELECT`/`INSERT`/`UPDATE` trên ba bảng seed; chạy migration bằng account sở hữu schema.
+
+Trước khi ghi, seed kiểm tra:
+
+- kết nối DB và sự tồn tại của `service_orders`/`service_policies` (thiếu bảng thì báo chạy migration);
+- `policyCommitment` on-chain khớp witness, listing cùng version/giá/cửa sổ khiếu nại, và `claimDeadline = purchaseTimestamp + disputeWindow`;
+- nếu đặt `SEED_BACKEND_URL` (hoặc `--backend-url`), gọi `GET /health` và yêu cầu `{"database":"ready"}`;
+- nếu truyền `--tx-hash`, tải receipt và xác nhận log `ServicePurchased` đúng order, commitment, buyer, seller, giá và timestamp. Hash không khớp bị từ chối, không được ghi vào receipt như bằng chứng giả.
+
+Seed ghi ba bảng trong một transaction:
+
+- `agent_listings_cache`: listing active đọc từ `AgentRegistry`.
+- `service_orders`: snapshot order đã confirmed, kèm commitment và timestamp từ checkout.
+- `service_policies`: witness (`disputeWindow`, `maxRefund`, `nonce`) mã hóa AES-256-GCM với AAD `service-policy:<orderId>`, cùng commitment/version. Một order chỉ có một policy; seed lại với commitment khác sẽ bị từ chối.
+
+Mặc định script lấy order `paid` trong `day2-api-fixture.json`. Có thể chỉ định rõ:
+
+```powershell
+# Chỉ kiểm tra chain + commitment, không cần DB
+node --env-file=.env apps/api/src/seed-staging.mjs --dry-run
+
+# Kiểm tra DB, backend /health và chain trước khi seed thật
+node --env-file=.env apps/api/src/seed-staging.mjs --check
+
+# Seed với order và tx hash cụ thể
+node --env-file=.env apps/api/src/seed-staging.mjs --order-id 0x... --tx-hash 0x...
+```
+
+`--dry-run` chỉ đọc chain và kiểm tra commitment; `--check` kiểm tra thêm kết nối DB, schema và backend nhưng không ghi. Các tùy chọn khác: `--agent-id`, `--policy`, `--manifest`, `--fixture`, `--backend-url`, `--receipt`. Biến môi trường tương ứng: `SEED_ORDER_ID`, `SEED_AGENT_ID`, `SEED_POLICY_FILE`, `SEED_FIXTURE_FILE`, `SEED_CHECKOUT_TX_HASH`, `SEED_BACKEND_URL`. Receipt công khai (không chứa witness) được ghi ở `.runtime/day2/seed-staging.json`.
+
+Kiểm thử phần kiểm tra commitment và mã hóa mà không cần DB/chain:
+
+```powershell
+npm.cmd run test:seed
+```
+
 ### Bật AI thật bằng OpenRouter Free
 
 Đặt `OPENROUTER_API_KEY` trong `project/.env`. Dùng `OPENROUTER_MODEL=openrouter/free` hoặc một model có hậu tố `:free`. Adapter chỉ gửi yêu cầu giá bằng 0, có thể trả lỗi quota nếu model miễn phí hết lượt. Dùng tài liệu và hóa đơn giả lập để demo. [OpenRouter Free Models](https://openrouter.ai/collections/free-models/)
@@ -177,7 +223,7 @@ Script reviewer dùng proof thật để duyệt hoàn **0,005 AVAX mô phỏng*
 ## 4. Cấu trúc và dữ liệu bàn giao
 
 - `circuits/service_policy`, `services/prover/` giữ circuit, chuẩn lập commitment và prover. Commitment dùng BLAKE2s với domain, orderId, policy version, cửa sổ khiếu nại, maxRefund và nonce riêng 128 bit. Mốc mua và hạn khiếu nại lấy từ chain, circuit kiểm tra chúng khớp với cửa sổ đã commit. Refund dùng số nguyên u64 theo wei. Nullifier gắn với case, order và source blockchain. DisputeManager chặn dùng lại nullifier.
-- `apps/api/migrations/002-day2.sql` thêm cache listing, orders, cases và agent outputs, mở rộng evidence. Bằng chứng và kết quả được mã hóa AES-256-GCM với IV ngẫu nhiên và auth tag cho từng bản ghi.
-- `apps/api/src/day2-routes.mjs` cung cấp `GET /api/agents`, `GET /api/orders/:id`, `POST /api/orders/:id/execute` và `POST /api/cases/upload`. Hai POST ký EIP-191 qua ví, ràng buộc scope chain/contract, thao tác, ID, hạn chữ ký và SHA-256 của JSON body. API xác minh trạng thái order và buyer từ chain. Executor dùng khóa theo order trong PostgreSQL, lease cho tác vụ lỗi và rate limit theo ví. Chế độ mock chain chỉ dùng khi bật rõ ràng với `DAY2_CHAIN_MODE=mock` và `DAY2_MOCK_BUYER`.
+- `apps/api/migrations/002-day2.sql` thêm cache listing, orders, cases và agent outputs, mở rộng evidence. `003-service-policies.sql` thêm witness policy riêng tư theo order (mã hóa, commitment khớp checkout). Bằng chứng và kết quả được mã hóa AES-256-GCM với IV ngẫu nhiên và auth tag cho từng bản ghi. `apps/api/src/seed-staging.mjs` seed agent + policy từ checkout thật để phục vụ staging.
+- `apps/api/src/day2-routes.mjs` cung cấp `GET /api/agents`, `GET /api/orders/:id`, `POST /api/orders/:id/execute`, `POST /api/cases/upload` và `POST /api/cases/:id/prepare-proof` (tạo proof từ policy đã mã hóa cho reviewer nộp qua ví). Hai POST ký EIP-191 qua ví, ràng buộc scope chain/contract, thao tác, ID, hạn chữ ký và SHA-256 của JSON body. API xác minh trạng thái order và buyer từ chain. Executor dùng khóa theo order trong PostgreSQL, lease cho tác vụ lỗi và rate limit theo ví. Chế độ mock chain chỉ dùng khi bật rõ ràng với `DAY2_CHAIN_MODE=mock` và `DAY2_MOCK_BUYER`.
 - `services/agents` xử lý OpenRouter Free, kiểm tra JSON và báo lỗi timeout, quota hoặc output sai schema. `apps/web/app/day2` chứa UI demo và màn hình chạy agent với order Hardhat. API key và dữ liệu policy riêng để ở server.
 - [Demo contract của Người 1](docs/DAY2-NGUOI1-DEMO.md) mô tả ABI, event và thứ tự public inputs. Teleporter chiều về trên Fuji vẫn để xử lý sau. Các bước trong tài liệu này chạy local.

@@ -11,6 +11,12 @@
   ],
   "scripts": {
     "test": "node --test tests/core.test.mjs",
+    "test:seed": "node --test tests/seed-staging.test.mjs",
+    "test:day3": "node --test tests/day3-worker.test.mjs",
+    "test:proof": "node --test tests/prepare-proof.test.mjs",
+    "test:all": "node --test tests/core.test.mjs tests/day2-agents.test.mjs tests/seed-staging.test.mjs tests/day3-worker.test.mjs tests/prepare-proof.test.mjs",
+    "seed:staging": "npm run seed:staging -w @warranty/api",
+    "worker:day3": "npm run worker:day3 -w @warranty/api",
     "dev:api": "npm run dev -w @warranty/api",
     "dev:web": "npm run dev -w @warranty/web",
     "build:web": "npm run build -w @warranty/web"

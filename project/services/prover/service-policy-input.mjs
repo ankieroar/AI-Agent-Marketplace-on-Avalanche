@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 const u64 = z.string().regex(/^(0|[1-9][0-9]*)$/).refine(v => BigInt(v) < 2n ** 64n);
+const uint = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const id = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 export const servicePolicyWitness = z.object({
   disputeWindow: u64, maxRefund: u64, nonce: z.string().regex(/^0x[0-9a-fA-F]{32}$/),
@@ -9,6 +10,9 @@ export const servicePolicyWitness = z.object({
 export const serviceClaim = z.object({
   caseId: id, orderId: id, policyCommitment: id, policyVersionHash: id,
   sourceBlockchainId: id, claimTimestamp: u64, purchaseTimestamp: u64, claimDeadline: u64,
+  // Present on the Solidity Claim struct; the circuit does not consume them,
+  // but accepting them keeps the full on-chain claim and prover input in sync.
+  nonce: uint.optional(), lockedAmount: uint.optional(),
 }).strict();
 
 function domain(label) {
