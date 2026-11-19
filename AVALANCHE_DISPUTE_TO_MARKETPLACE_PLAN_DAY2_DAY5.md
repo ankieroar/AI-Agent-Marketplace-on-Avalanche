@@ -228,10 +228,12 @@ CaseResolutionCommitted {
 
 **👤 Người 2:**
 
-- [ ] Kết nối DB/backend staging, seed một agent và chính sách service giả lập (commitment thật từ checkout).
-- [ ] Watch `ServicePurchased` trên Fuji → kích hoạt service executor theo yêu cầu hợp lệ; không chạy lặp khi event được xử lý lại.
-- [ ] Watch `CaseOpened` trên Dispute L1 → chạy Evidence/Policy/Resolution → prover → nộp proof bằng relayer/submitter có quyền tối thiểu.
-- [ ] Kết nối trạng thái order/case, thống nhất xác nhận giao dịch và retry; tránh báo thành công trước khi final state cập nhật.
+- [x] Kết nối DB/backend staging, seed một agent và chính sách service giả lập (commitment thật từ checkout) — CLI `npm run seed:staging` + `service_policies` mã hóa; xem `project/docs/DAY3-NGUOI2.md`.
+- [x] Watch `ServicePurchased` trên Fuji → kích hoạt service executor theo yêu cầu hợp lệ; không chạy lặp khi event được xử lý lại.
+- [x] Watch `CaseOpened` trên Dispute L1 → chạy Evidence/Policy/Resolution → prover → nộp proof bằng relayer/submitter có quyền tối thiểu (reviewer key riêng). Bổ sung `POST /api/cases/:id/prepare-proof` để UI không cần chạy prover bằng tay.
+- [x] Kết nối trạng thái order/case, thống nhất xác nhận giao dịch và retry; tránh báo thành công trước khi final state cập nhật.
+
+> Ghi chú Người 2: các mục trên đã có code/migration/test offline (`npm run test:all` 44/44). Việc **chạy thật trên staging** vẫn cần `.env`, PostgreSQL, RPC/manifest Fuji + L1 và toolchain Noir/bb của hạ tầng; xem mục “Giới hạn / chưa kiểm chứng” trong `project/docs/DAY3-NGUOI2.md`. Không tick mục bàn giao Ngày 3 (2 kịch bản A/B chạy thật) cho tới khi có tx hash thật.
 
 **👤 Người 3:**
 

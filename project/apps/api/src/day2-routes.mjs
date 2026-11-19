@@ -3,13 +3,18 @@ import { ethers } from 'ethers';
 import { z } from 'zod';
 import express from 'express';
 import { pool } from './db.mjs';
-import { encrypt, decrypt } from './crypto.mjs';
-import { ApiError, day2Chain } from './day2-chain.mjs';
-import { chatWithModel, mockSummary, summarizeDocument } from '@warranty/agents';
+import { encrypt } from './crypto.mjs';
+import { ApiError, day2Chain, day2CaseChain } from './day2-chain.mjs';
+import { chatWithModel } from '@warranty/agents';
 import { summaryInputSchema } from '@warranty/schema';
+import { executeServiceOrder, saveBuyerServiceRequest } from './service-executor.mjs';
+import { prepareProof } from './prepare-proof.mjs';
 
 const hexId = z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform(s=>s.toLowerCase());
 const evidenceInput = z.object({caseId:hexId,text:z.string().trim().min(1).max(30000)}).strict();
+const prepareProofInput = z.object({
+  refundWei:z.string().regex(/^(0|[1-9][0-9]*)$/).optional(),
+}).strict();
 const chatInput = z.object({messages:z.array(z.object({
   role:z.enum(['user','assistant']),content:z.string().trim().min(1).max(4000),
 }).strict()).min(1).max(12)}).strict();
@@ -72,7 +77,34 @@ day2Routes.get('/orders/:id',wrap(async (req,res)=>{
   if(!order) throw new ApiError(404,'Confirmed order not found');
   await saveOrder(order);
   const {rows:[job]}=await pool.query('SELECT status,result_hash,mode FROM agent_outputs WHERE order_id=$1',[id]);
-  res.json({scope:chain.scope,...order,execution:job??null});
+  const {rows:[request]}=await pool.query(
+    'SELECT source,input_hash,created_at FROM service_requests WHERE order_id=$1',[id]);
+  const {rows:[caseJob]}=await pool.query(
+    'SELECT status,attempts,payout_amount,proof_hash,start_tx_hash,proof_tx_hash,last_error,updated_at FROM case_jobs WHERE order_id=$1',[id]);
+  res.json({scope:chain.scope,...order,execution:job??null,
+    request:request??null,case:caseJob??null});
+}));
+day2Routes.get('/cases/:id',wrap(async (req,res)=>{
+  const id=hexId.parse(req.params.id);
+  const chain=await day2CaseChain();
+  const claim=await chain.claim(id);
+  if(!claim) throw new ApiError(404,'Case not found on the dispute chain');
+  const {rows:[job]}=await pool.query(`SELECT status,attempts,payout_amount,nullifier,
+    proof_hash,start_tx_hash,proof_tx_hash,last_error,updated_at
+    FROM case_jobs WHERE case_id=$1`,[id]);
+  res.json({scope:chain.scope,...claim,worker:job??null});
+}));
+day2Routes.post('/cases/:id/prepare-proof',wrap(async (req,res)=>{
+  const caseId=hexId.parse(req.params.id);
+  const body=prepareProofInput.parse(req.body ?? {});
+  // Proof generation is CPU-expensive but non-privileged: the witness stays on
+  // the server and no transaction is sent. Limit it per caller.
+  rateLimit(req.ip || 'local','prepare-proof');
+  const result=await prepareProof({
+    caseId, refundWei:body.refundWei, pool,
+    settlement:await day2Chain(), dispute:await day2CaseChain(),
+  });
+  res.json(result);
 }));
 day2Routes.post('/orders/:id/execute',wrap(async (req,res)=>{
   const id=hexId.parse(req.params.id);
@@ -86,43 +118,18 @@ day2Routes.post('/orders/:id/execute',wrap(async (req,res)=>{
     throw new ApiError(409,'Service order is not eligible');
   rateLimit(owner,'execute');
   await saveOrder(order);
+  await saveBuyerServiceRequest({pool,orderId:id,buyer:order.buyer,input:body});
 
   const mode=process.env.DAY2_AI_MODE==='mock'?'mock':'openrouter';
-  const hash=digest(body), attempt=randomUUID();
-  if (order.status===1) {
-    const {rowCount}=await pool.query(`INSERT INTO agent_outputs(order_id,input_hash,attempt,status,lease_until,mode)
-      VALUES($1,$2,$3,'running',now()+interval '2 minutes',$4)
-      ON CONFLICT(order_id) DO UPDATE SET status='running',attempt=excluded.attempt,
-      lease_until=excluded.lease_until,mode=excluded.mode
-      WHERE agent_outputs.input_hash=excluded.input_hash AND
-      (agent_outputs.status='failed' OR (agent_outputs.status='running' AND agent_outputs.lease_until<now()))`,
-    [id,hash,attempt,mode]);
-    if (rowCount) {
-      try {
-        const result=mode==='mock'?mockSummary(body.text):await summarizeDocument(body.text);
-        const resultHash=ethers.id(JSON.stringify(result));
-        const stored=await pool.query(`UPDATE agent_outputs SET status='delivered',encrypted=$3,result_hash=$4
-          WHERE order_id=$1 AND attempt=$2`,[id,attempt,encrypt(result,process.env.AES_KEY_HEX,'agent-output:'+id),resultHash]);
-        if (!stored.rowCount) throw new ApiError(409,'Execution lease expired. Read the current result.');
-        return res.json({orderId:id,status:'DELIVERED',mode,result,resultHash});
-      } catch(e) {
-        await pool.query("UPDATE agent_outputs SET status='failed' WHERE order_id=$1 AND attempt=$2 AND status='running'",[id,attempt]);
-        throw e;
-      }
-    }
-  }
-  const {rows:[job]}=await pool.query('SELECT * FROM agent_outputs WHERE order_id=$1',[id]);
-  if(!job || job.input_hash!==hash) throw new ApiError(409,'Order is not executable with this input');
-  if(job.status==='running') return res.status(202).json({orderId:id,status:'RUNNING'});
-  if(job.status!=='delivered') throw new ApiError(409,'Order is no longer executable');
-  res.json({orderId:id,status:'DELIVERED',mode:job.mode,
-    result:decrypt(job.encrypted,process.env.AES_KEY_HEX,'agent-output:'+id),resultHash:job.result_hash});
+  const result=await executeServiceOrder({pool,order,input:body,mode});
+  res.status(result.status==='RUNNING'?202:200).json(result);
 }));
 day2Routes.post('/cases/upload',wrap(async (req,res)=>{
   const body=evidenceInput.parse(req.body);
   const chain=await day2Chain();
+  const dispute=await day2CaseChain();
   const owner=wallet(req,chain.scope,'upload',body.caseId,body);
-  const claim=await chain.claim(body.caseId);
+  const claim=await dispute.claim(body.caseId);
   if(!claim) throw new ApiError(404,'Case not found');
   const order=await chain.order(claim.orderId);
   if(!order || order.buyer!==owner) throw new ApiError(403,'Only the case buyer can upload');
