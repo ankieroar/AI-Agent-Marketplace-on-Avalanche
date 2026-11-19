@@ -970,7 +970,7 @@ Options:
   --from-block N       Override the first start block for this run
   --help               Show this help
 
-Environment: see docs/DAY3-NGUOI2.md and project/.env.example.`);
+Environment: see the repository README and project/.env.example.`);
 }
 
 async function runOnce({

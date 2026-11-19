@@ -67,6 +67,7 @@ day2Routes.post('/dispute-preview',wrap(async(req,res)=>{
 }));
 day2Routes.post('/quote',wrap(async(req,res)=>{
   rateLimit(req.ip || 'local','quote');
+  rateLimit(req.ip || 'local','quote');
   const positive = z.string().regex(/^[1-9][0-9]{0,38}$/);
   const quote = z.object({orderId:hexId,agentId:hexId,policyVersionHash:hexId,
     priceWei:positive,disputeWindow:positive.default('3600')}).strict().parse(req.body);

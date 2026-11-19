@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const circuitDir = path.join(root, 'circuits/hello_world');
 const nargo = path.join(root, '.tools/noir/nargo');
-if (!fs.existsSync(nargo)) throw new Error('Install pinned Noir beta.3 first; see README-ZK-DAY1.md');
+if (!fs.existsSync(nargo)) throw new Error('This legacy circuit requires Noir beta.3 at .tools/noir/nargo. See the repository README for the active policy prover.');
 if (!fs.existsSync(path.join(circuitDir, 'Prover.toml'))) {
   fs.copyFileSync(path.join(circuitDir, 'Prover.example.toml'), path.join(circuitDir, 'Prover.toml'));
 }

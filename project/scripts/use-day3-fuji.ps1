@@ -7,7 +7,12 @@ if ($deployment.chainId -ne 43113 -or $deployment.transport -ne 'same-chain') {
 $env:DAY2_CONTRACTS_FILE = $runtimeFile
 $env:DAY3_SERVICE_MANIFEST = $runtimeFile
 $env:DAY3_L1_MANIFEST = $runtimeFile
-$env:DAY2_RPC_URL = 'https://api.avax-test.network/ext/bc/C/rpc'
+$env:DAY2_CHAIN_MODE = 'fuji'
+if ($env:FUJI_RPC_URL) {
+    $env:DAY2_RPC_URL = $env:FUJI_RPC_URL
+} else {
+    $env:DAY2_RPC_URL = 'https://api.avax-test.network/ext/bc/C/rpc'
+}
 $env:DAY3_SERVICE_RPC_URL = $env:DAY2_RPC_URL
 $env:DAY3_L1_RPC_URL = $env:DAY2_RPC_URL
 $env:NEXT_PUBLIC_DAY3_TRANSPORT = 'fuji-only'

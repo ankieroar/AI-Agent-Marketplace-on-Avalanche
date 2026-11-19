@@ -1,8 +1,13 @@
 {
   "name": "@warranty/prover",
   "private": true,
-  "scripts": { "prove": "node prove-wasm.mjs", "day1": "node prepare-circuit.mjs && node prove-wasm.mjs" },
+  "scripts": {
+    "prove": "node prove-wasm.mjs",
+    "day1": "node prepare-circuit.mjs && node prove-wasm.mjs"
+  },
   "dependencies": {
-    "@aztec/bb.js": "0.82.2"
+    "@aztec/bb.js": "0.82.2",
+    "@noir-lang/noir_js": "1.0.0-beta.3",
+    "@noir-lang/noir_wasm": "1.0.0-beta.3"
   }
 }

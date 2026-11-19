@@ -37,7 +37,7 @@ export async function GET() {
       if (typeof address === 'string' && /^0x[0-9a-fA-F]{40}$/.test(address)) addresses[key] = address;
     }
     return NextResponse.json({ chainId: manifest.chainId ?? 31337, addresses,
-      transport: manifest.transport === 'same-chain' ? 'same-chain' : 'relay', source: file }, {
+      transport: manifest.transport === 'same-chain' ? 'same-chain' : 'relay' }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch {

@@ -7,10 +7,16 @@ const { CHAINS, emptyManifest, readManifest, writeManifest, deployFujiSide, depl
 async function main() {
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
   if (chainId !== 43113 || network.name !== "fuji") throw Error("Select --network fuji (43113)");
+  if (!/^(?:0x)?[0-9a-fA-F]{64}$/.test(process.env.PRIVATE_KEY || "")) {
+    throw Error("Set PRIVATE_KEY to a funded Fuji testnet deployer key");
+  }
   if (!process.env.DAY3_REVIEWER) throw Error("Set DAY3_REVIEWER to the reviewer's public address before deploying");
+  if (!process.env.DAY3_SELLER) throw Error("Set DAY3_SELLER to the seller's public address before deploying");
   const reviewer = ethers.getAddress(process.env.DAY3_REVIEWER);
-  const seller = process.env.DAY3_SELLER ? ethers.getAddress(process.env.DAY3_SELLER) : null;
-  if (reviewer === ethers.ZeroAddress) throw Error("Reviewer cannot be zero");
+  const seller = ethers.getAddress(process.env.DAY3_SELLER);
+  if (reviewer === ethers.ZeroAddress || seller === ethers.ZeroAddress) throw Error("Seller and reviewer must be nonzero");
+  const [deployer] = await ethers.getSigners();
+  if (await ethers.provider.getBalance(deployer.address) === 0n) throw Error("Deployer needs Fuji testnet AVAX");
   const dir = path.resolve(__dirname, "../../deployments/fuji-only");
   const manifest = readManifest("fuji", dir) || emptyManifest(CHAINS.fuji);
   if (manifest.reviewer && manifest.reviewer !== reviewer) throw Error("Reviewer differs from previous deployment");
@@ -26,7 +32,7 @@ async function main() {
   const options = { manifest, messenger, reviewer, log: console.log };
   try {
     const market = await deployFujiSide(options);
-    if (seller && !await market.agents.approvedSeller(seller)) {
+    if (!await market.agents.approvedSeller(seller)) {
       await (await market.agents.setSellerApproved(seller, true)).wait();
     }
     const dispute = await deployL1Side(options);
