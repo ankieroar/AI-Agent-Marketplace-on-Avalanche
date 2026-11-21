@@ -11,7 +11,7 @@ Tài liệu này hướng dẫn một người chạy hệ thống trên máy Wi
 
 ## 1. Chuẩn bị ví và project
 
-Trong Core, cả nhóm bật **Testnet Mode** và chọn **Avalanche Fuji C-Chain (43113)**. RPC công khai là `https://api.avax-test.network/ext/bc/C/rpc`. Dùng ví test riêng cho Fuji. Khóa mặc định của Hardhat là khóa công khai dành cho local. [Thiết lập Core và Fuji](https://build.avax.network/academy/blockchain/x402-payment-infrastructure/05-hands-on-implementation/01-environment-setup)
+Trong Core, cả nhóm bật **Testnet Mode** và chọn **Avalanche Fuji C-Chain (43113)**. RPC công khai là `https://api.avax-test.network/ext/bc/C/rpc`. Dùng ví test riêng cho Fuji. Khóa mặc định của Hardhat là khóa công khai dành cho local. Luồng demo trong tài liệu này thực hiện cả marketplace và tranh chấp trên Fuji C-Chain. Kết nối Custom Dispute L1 qua Teleporter tạm thời chưa khả dụng. [Thiết lập Core và Fuji](https://build.avax.network/academy/blockchain/x402-payment-infrastructure/05-hands-on-implementation/01-environment-setup)
 
 | Vai trò | Cần chuẩn bị |
 | --- | --- |
@@ -50,19 +50,24 @@ Giữ `DATABASE_URL`, `POSTGRES_PASSWORD` và `AES_KEY_HEX` đang dùng nếu ti
 Từ thư mục `project`, chạy trong PowerShell:
 
 ```powershell
-Set-Location contracts
-npx.cmd hardhat run scripts/deploy-day3-fuji-only.js --network fuji
+Push-Location contracts
+try {
+    npx.cmd hardhat run scripts/deploy-day3-fuji-only.js --network fuji
+    if ($LASTEXITCODE -ne 0) { throw 'Deploy Fuji chưa hoàn tất.' }
+} finally {
+    Pop-Location
+}
 ```
 
 Lệnh gửi giao dịch lên **Fuji testnet** và dùng AVAX testnet của ví deploy trả gas. Docker và PostgreSQL dùng từ bước chạy app. Sau khi lệnh thành công, kiểm tra trong cùng terminal:
 
 ```powershell
-Test-Path -LiteralPath '..\deployments\fuji-only\runtime.json'
+Test-Path -LiteralPath '.\deployments\fuji-only\runtime.json'
 ```
 
-Nếu trả `True`, manifest đã sẵn sàng để cấu hình app. Thư mục `project/deployments/fuji-only/` chứa địa chỉ contract, ABI và tx hash deploy. Nếu tiếp tục dùng một deployment có sẵn, dùng lại manifest tương ứng.
+Sau khi lệnh deploy thành công, `True` xác nhận manifest đã có để cấu hình app. Thư mục `project/deployments/fuji-only/` chứa địa chỉ contract, ABI và tx hash deploy. Giữ thư mục này để khởi động lại app hoặc chạy tiếp lần deploy đang dở với cùng ví deploy và Reviewer.
 
-**Phí tham khảo:** phép đo mô phỏng một lần deploy mới gồm 21 giao dịch và khoảng **9,68 triệu gas**. Với mẫu giá Fuji RPC là **160 wei/gas**, chi phí ước tính khoảng **0,00000000155 AVAX testnet**. Giá gas thay đổi và số tiền thực tế cần đọc từ các receipt sau khi deploy. Phí của những giao dịch demo được tính riêng. [Cách Avalanche tính phí giao dịch](https://build.avax.network/docs/rpcs/other/guides/txn-fees)
+Phí deploy thực tế là tổng `gasUsed × effectiveGasPrice` của các giao dịch triển khai và cấu hình, dùng AVAX testnet. Tra phí từng giao dịch trong receipt hoặc trên explorer Fuji. Các giao dịch khi demo sẽ trả gas riêng. [Cách Avalanche tính phí giao dịch](https://build.avax.network/docs/rpcs/other/guides/txn-fees)
 
 ## 3. Bật Docker và chạy ứng dụng
 
@@ -70,11 +75,16 @@ Mở **Docker Desktop** và đợi Docker Engine sẵn sàng. Từ thư mục `p
 
 ```powershell
 docker compose up -d postgres
-docker compose ps postgres
+docker compose exec -T postgres pg_isready -h 127.0.0.1 -U warranty -d warranty
+```
+
+Khi PostgreSQL báo `accepting connections`, chạy migration. Nếu container còn khởi động, đợi vài giây rồi chạy lại lệnh `pg_isready`.
+
+```powershell
 npm.cmd run migrate -w @warranty/api
 ```
 
-Kiểm tra PostgreSQL hiện `Up` và migration in `Migrations complete`. Tùy chọn `-d` giữ container chạy nền. Nếu Docker CLI báo thiếu pipe Docker Engine, kiểm tra lại trạng thái Docker Desktop. [Docker Compose](https://docs.docker.com/reference/cli/docker/compose/up)
+Chờ migration in `Migrations complete`. Tùy chọn `-d` giữ container chạy nền. Nếu Docker CLI báo thiếu pipe Docker Engine, kiểm tra lại trạng thái Docker Desktop. [Docker Compose](https://docs.docker.com/reference/cli/docker/compose/up)
 
 Nếu đang có bản local dùng cổng `3001` và `3000`, dừng API và web đó để dùng lại cổng. Sau đó mở **hai terminal riêng trong thư mục `project`**.
 
@@ -82,6 +92,7 @@ Nếu đang có bản local dùng cổng `3001` và `3000`, dừng API và web �
 
 ```powershell
 . .\scripts\use-day3-fuji.ps1
+$env:PORT = '3001'
 npm.cmd run dev:api
 ```
 
@@ -93,9 +104,9 @@ npm.cmd run build:web
 npm.cmd exec -w @warranty/web -- next start
 ```
 
-Script cấu hình nạp manifest Fuji cho cả API và web. Web đưa các địa chỉ contract vào bundle lúc build, nên hãy nạp cấu hình trước khi chạy `build:web`.
+Script cấu hình nạp manifest Fuji cho cả API và web. Web đưa các địa chỉ contract vào bundle lúc build, nên hãy nạp cấu hình trước khi chạy `build:web`. Nếu dùng RPC tùy chỉnh qua `FUJI_RPC_URL`, đặt biến `$env:FUJI_RPC_URL` trong terminal deploy và trong hai terminal của app trước khi nạp cấu hình.
 
-Mở `http://127.0.0.1:3001/health` và kiểm tra có `{"database":"ready"}`. Sau đó mở `http://localhost:3000/day3` và kiểm tra nút mạng hiện **Fuji (43113)**.
+Mở `http://127.0.0.1:3001/health` và kiểm tra có `{"database":"ready"}`. Mở `http://127.0.0.1:3001/api/agents` và kiểm tra `scope` bắt đầu bằng `43113:`. `agents` có thể còn trống trước khi Seller đăng ký listing. Sau đó mở `http://localhost:3000/day3` và kiểm tra nút mạng hiện **Fuji (43113)**.
 
 ## 4. Chia sẻ link HTTPS cho team
 
@@ -125,15 +136,17 @@ Hai kịch bản bắt đầu bằng các bước chung:
 
 Chọn **Về đơn hàng** trong workspace AI để mở lại đúng đơn trên `/day3` và xem trạng thái mới nhất. Với đơn cũ chưa có trong danh sách, tra cứu bằng **Order ID** trên `/day3` bằng ví Buyer. Lịch sử chat chỉ hiện trong phiên đang mở.
 
+Mỗi lần ký gửi tóm tắt dùng tối đa một request OpenRouter. Khi cần giữ quota cho buổi demo, có thể mở lại bản tóm tắt đã lưu hoặc dùng `npm.cmd run test:all` để kiểm thử backend bằng phản hồi AI mô phỏng.
+
 **Plan A:** Buyer kiểm tra kết quả và bấm **Chấp nhận**. Seller vào **Số dư escrow**, làm mới số dư và chọn **Rút tiền (Withdraw)**.
 
-**Plan B:** Dùng một đơn mới. Buyer mở tranh chấp trong thời hạn, ký gửi bằng chứng và chuyển **Case ID** cho Reviewer. Reviewer tra case, bấm **Bắt đầu phân tích**, nhập mức hoàn thử `5000000000000000` wei (**0,005 AVAX** trên đơn mẫu `0.01 AVAX`), rồi chọn **Tạo proof bằng WASM → Nộp Proof**. Khi case hiện **ProofVerified**, Reviewer chuyển vào Merchant Review, duyệt hoàn tiền và **Gửi phán quyết tới escrow**. Buyer về tab **Buyer → Số dư escrow** để rút.
+**Plan B:** Dùng một đơn mới. Buyer mở tranh chấp trong thời hạn, ký gửi bằng chứng và chuyển **Case ID** cho Reviewer. Reviewer tra case và bấm **Bắt đầu phân tích** để chuyển case sang `Analyzing`. Tiếp đó nhập `5000000000000000` wei (**0,005 AVAX** trên đơn mẫu `0.01 AVAX**) vào ô **Số tiền hoàn (wei)** khi chạy thủ công, rồi chọn **Tạo proof bằng WASM → Nộp Proof**. Nếu worker đã lưu mức hoàn, để trống để dùng mức đó. Nút **Bắt đầu phân tích** chuyển trạng thái on-chain. Mục **Phân tích bằng AI** chạy riêng và có thể bỏ qua trong buổi demo. Khi case hiện `ProofVerified`, chọn **Chuyển vào Merchant Review → Duyệt hoàn tiền → Gửi phán quyết tới escrow**. Buyer về **Số dư escrow**, làm mới và chọn **Rút tiền (Withdraw)**.
 
 Bấm link explorer trong **Nhật ký giao dịch**, hoặc copy tx hash của các bước **Mua**, **Nộp Proof**, **Gửi phán quyết** và **Withdraw**. Receipt nộp proof thành công có sự kiện `CaseProofVerified`, xác nhận contract đã kiểm tra ZK proof. Nội dung tài liệu, bằng chứng và kết quả AI thuộc phần xử lý và lưu trữ mã hóa của backend. [Fuji C-Chain Explorer](https://build.avax.network/explorer/fuji/c-chain)
 
 ## 6. Cập nhật sau buổi demo
 
 - **Sửa web, API hoặc AI:** cập nhật và khởi động lại phần tương ứng, dùng lại manifest Fuji hiện tại. Cập nhật web thì build lại sau khi nạp cấu hình Fuji.
-- **Sửa logic Solidity:** giữ lại thư mục manifest cũ riêng rồi triển khai bộ contract mới. Script dùng lại địa chỉ khi thấy manifest hiện có ở `deployments/fuji-only/`. Sau khi deploy bộ mới, nạp lại manifest vào API, build lại web và tạo quote mới. Đơn hàng và tranh chấp cũ vẫn tra được theo địa chỉ contract cũ.
+- **Sửa logic Solidity:** lưu thư mục manifest cũ ở đường dẫn khác để `deployments/fuji-only/` trống trước khi triển khai bộ contract mới. Script dùng lại địa chỉ từ `deployments/fuji-only/fuji.json` nếu file đó còn ở chỗ cũ. Sau khi deploy bộ mới, nạp lại manifest vào API, build lại web và tạo quote mới. Đơn hàng và tranh chấp cũ vẫn tra được theo địa chỉ contract cũ.
 
 Xem [README của dự án](README.md) để biết thêm cách chạy local và kiểm thử.
