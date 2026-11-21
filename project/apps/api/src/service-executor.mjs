@@ -45,6 +45,17 @@ export function readStoredServiceInput(row, orderId) {
   return validateServiceInput(decrypt(row.ciphertext, process.env.AES_KEY_HEX, serviceInputAad(orderId)));
 }
 
+export function readStoredServiceOutput(row, orderId) {
+  if (row?.status !== 'delivered') throw new ApiError(409, 'Order does not have a summary yet');
+  return {
+    orderId,
+    status: 'DELIVERED',
+    mode: row.mode,
+    result: decrypt(row.encrypted, process.env.AES_KEY_HEX, 'agent-output:' + orderId),
+    resultHash: row.result_hash,
+  };
+}
+
 /**
  * Execute the Document Summary Agent for a confirmed paid order.
  * Returns DELIVERED, RUNNING or throws ApiError; never reports success before
@@ -100,11 +111,5 @@ export async function executeServiceOrder({
   }
   if (job.status === 'running') return { orderId: order.orderId, status: 'RUNNING' };
   if (job.status !== 'delivered') throw new ApiError(409, 'Order is no longer executable');
-  return {
-    orderId: order.orderId,
-    status: 'DELIVERED',
-    mode: job.mode,
-    result: decrypt(job.encrypted, process.env.AES_KEY_HEX, 'agent-output:' + order.orderId),
-    resultHash: job.result_hash,
-  };
+  return readStoredServiceOutput(job, order.orderId);
 }

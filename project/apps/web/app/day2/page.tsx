@@ -1,13 +1,14 @@
 ﻿'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
 import { useAccount, useConnect, useSignMessage } from 'wagmi';
 import { sha256, toBytes } from 'viem';
+import { OrderWorkspace, Summary, type Result } from './order-workspace';
 import styles from './day2.module.css';
 
 type Status = 'PAID' | 'RUNNING' | 'DELIVERED' | 'ACCEPTED' | 'DISPUTED';
-type Result = {summary:string;keyPoints:string[];caveats:string[]};
 type Review = 'OPENED' | 'ANALYZING' | 'APPROVED' | 'REJECTED';
 const example = 'Đơn #001 mua dịch vụ tóm tắt tài liệu với giá 0,01 AVAX. Tài liệu mô tả quy trình xử lý trong một ngày. Tài liệu không ghi rõ thời điểm bắt đầu.';
 const reviewNotes = {
@@ -15,14 +16,6 @@ const reviewNotes = {
   policy:'Order mẫu dùng cửa sổ khiếu nại một giờ kể từ lúc mua.',
   resolution:'Đề xuất hoàn một nửa phí thử nghiệm. Reviewer cần xác nhận.',
 };
-
-function Summary({result}:{result:Result}) {
-  return <>
-    <p>{result.summary}</p>
-    <ul>{result.keyPoints.map((point,i)=><li key={i}>{point}</li>)}</ul>
-    {result.caveats.length>0 && <p className={styles.note}>{result.caveats.join(' ')}</p>}
-  </>;
-}
 
 function ConnectedExecution() {
   const {address}=useAccount();
@@ -108,8 +101,8 @@ function AiChat() {
     } finally {setBusy(false);}
   }
   return <section className={styles.panel}>
-    <h2>Chat với AI</h2>
-    <p>Dùng OpenRouter Free qua backend. Không cần ví. API key được giữ ở server.</p>
+    <h2>Chat AI chung</h2>
+    <p>Để hỏi về tài liệu đã mua, mở workspace từ mục <Link href="/day3#my-services">Dịch vụ đã mua</Link>.</p>
     <div className={styles.chatLog} aria-live="polite">
       {!messages.length&&<p>Hỏi AI điều bạn muốn biết.</p>}
       {messages.map((message,index)=><p key={index}><strong>{message.role==='user'?'Bạn':'AI'}:</strong> {message.content}</p>)}
@@ -124,7 +117,7 @@ function AiChat() {
   </section>;
 }
 
-export default function Day2() {
+function DemoWorkspace() {
   const [details,setDetails]=useState(false);
   const [mode,setMode]=useState<'demo'|'api'>('demo');
   const [status,setStatus]=useState<Status>();
@@ -144,7 +137,10 @@ export default function Day2() {
   }
   function reset() {setStatus(undefined);setReview(undefined);setResult(undefined);setTimeline([]);}
   return <main className={styles.workspace}>
-    <Link href="/">← Day 1</Link>
+    <nav className={styles.workspaceNav} aria-label="Marketplace">
+      <Link href="/day3">← Marketplace</Link>
+      <Link href="/day3#my-services">Dịch vụ đã mua</Link>
+    </nav>
     <header><p className="eyebrow">AI AGENT MARKETPLACE</p><h1>Document Summary Agent</h1>
       <p>Tóm tắt tài liệu ngắn và kiểm tra luồng khiếu nại của một đơn dịch vụ.</p></header>
     <div className={styles.actions}>
@@ -191,4 +187,25 @@ export default function Day2() {
       </div>
     </div>}
   </main>;
+}
+
+function WorkspacePage() {
+  const order = useSearchParams().get('order');
+  if (order === null) return <DemoWorkspace />;
+  const orderId = order.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(orderId)) {
+    return <main className={styles.workspace}>
+      <p role="alert">Order ID trong liên kết không hợp lệ.</p>
+      <Link href="/day3#my-services">Xem dịch vụ đã mua</Link>
+    </main>;
+  }
+  return <OrderWorkspace key={orderId} orderId={orderId} />;
+}
+
+export default function Day2() {
+  return (
+    <Suspense fallback={<main className={styles.workspace}>Đang mở workspace AI…</main>}>
+      <WorkspacePage />
+    </Suspense>
+  );
 }

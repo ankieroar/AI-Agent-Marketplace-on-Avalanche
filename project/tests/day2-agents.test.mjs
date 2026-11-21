@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {runPipeline,summarizeDocument} from '@warranty/agents';
+import {chatWithModel,runPipeline,summarizeDocument} from '@warranty/agents';
 
 const canned=[
   {purchaseDate:'2026-01-01',faultDescription:'Missing section',missingEvidence:[]},
@@ -38,4 +38,23 @@ test('Day 2 summary and dispute adapters validate JSON and propagate provider fa
   }}),/Payout exceeds policy/);
   process.env.OPENROUTER_MODEL='paid/model';
   await assert.rejects(summarizeDocument('Sample',{fetchImpl:async()=>{throw new Error('paid contact');}}),/FREE_ONLY/);
+});
+
+test('order chat sends server-supplied document and summary as data alongside the question', async () => {
+  process.env.OPENROUTER_API_KEY = 'fake-for-injected-fetch';
+  process.env.OPENROUTER_MODEL = 'openrouter/free';
+  const orderContext = { document: 'Synthetic contract, delivery in 4 days.', summary };
+  const question = { role: 'user', content: 'Giao hàng trong bao lâu?' };
+  const answer = await chatWithModel({ messages: [question] }, {
+    orderContext,
+    fetchImpl: async (_, options) => {
+      const payload = JSON.parse(options.body);
+      assert.match(payload.messages[0].content, /purchased document summary/);
+      assert.equal(payload.messages[1].role, 'user');
+      assert.deepEqual(JSON.parse(payload.messages[1].content), { orderContext });
+      assert.deepEqual(payload.messages[2], question);
+      return reply('4 ngày.');
+    },
+  });
+  assert.equal(answer.reply, '4 ngày.');
 });

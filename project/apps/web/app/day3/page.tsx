@@ -1,6 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   useAccount,
   useConnect,
@@ -84,6 +87,8 @@ type OrderView = {
   resultHash: string;
   caseId: string;
 };
+
+type PurchasedOrder = { orderId: string; priceWei: string; status: number };
 
 type CaseView = {
   claim: {
@@ -240,7 +245,9 @@ Cửa sổ mở khiếu nại: 3600 giây (1 giờ).
 Mức bồi hoàn tối đa khi có tranh chấp: 0.005 AVAX.
 Trường hợp bất khả kháng hoặc thiếu dữ liệu đầu vào cần thông báo cho bên A trong 2 giờ.`;
 
-export default function Day3Page() {
+function MarketplacePage() {
+  const orderParam = useSearchParams().get('order')?.trim().toLowerCase();
+  const requestedOrder = isHex32(orderParam) ? orderParam : null;
   // --- Wallet & Chain State ---
   const { address, connector, isConnected, chain, chainId } = useAccount();
   const { connect, connectors, error: connectError, isPending: connecting } = useConnect();
@@ -303,12 +310,14 @@ export default function Day3Page() {
   const resultSenderAddress = (customResultSender.trim() || disputeBook.resultSender) as `0x${string}`;
 
   // --- Buyer / Marketplace States ---
-  const [orderId, setOrderIdState] = useState<string>('');
+  const [orderId, setOrderIdState] = useState<string>(requestedOrder ?? '');
   const [documentText, setDocumentText] = useState(EXAMPLE_DOC);
   const [loadedOrder, setOrderOnChain] = useState<OrderView | null>(null);
   const orderOnChain = sameAddress(loadedOrder?.orderId, orderId.trim()) ? loadedOrder : null;
 
-  const [aiResult, setAiResult] = useState<(Result & { mode: string; hash: string }) | null>(null);
+  const [serviceResult, setAiResult] = useState<(Result & { mode: string; hash: string; orderId: string; buyer: string }) | null>(null);
+  const aiResult = sameAddress(serviceResult?.orderId, orderId.trim()) && sameAddress(serviceResult?.buyer, address)
+    ? serviceResult : null;
   const [caseId, setCaseId] = useState<string>('');
   const [evidenceText, setEvidenceText] = useState('Dịch vụ thiếu các điều khoản bắt buộc và không hoàn thành đúng tiến độ.');
 
@@ -538,7 +547,7 @@ export default function Day3Page() {
       const quote = parseQuote(raw);
       setSignedQuote(quote);
       setBuyerForQuote(quote.buyer);
-      if (address) setOrderIdState(quote.orderId);
+      if (address && !requestedOrder) setOrderIdState(quote.orderId);
     } catch {
       window.localStorage.removeItem(QUOTE_KEY);
     }
@@ -557,6 +566,20 @@ export default function Day3Page() {
     args: address ? [address] : undefined,
     chainId: settlementChainId,
     query: { enabled: !!address && !zeroAddress(escrowAddress) },
+  });
+
+  const orderScope = `${settlementChainId}:${orderManagerAddress.toLowerCase()}`;
+  const boughtOrders = useQuery({
+    queryKey: ['purchased-orders', address?.toLowerCase(), orderScope],
+    enabled: activeTab === 'marketplace' && !!address && !zeroAddress(orderManagerAddress),
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const response = await fetch(`/api/day3/buyers/${address}/orders`, { cache: 'no-store', signal });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Không tải được danh sách đơn.');
+      if (data.scope !== orderScope) throw new Error('Web và API đang dùng khác mạng hoặc hợp đồng marketplace.');
+      return data.orders as PurchasedOrder[];
+    },
   });
 
   // --- Helper: Check Order On-Chain (always on the settlement chain) ---
@@ -580,17 +603,37 @@ export default function Day3Page() {
         args: [targetId],
       });
       const order = readOrder(targetId, data);
+      if (order.status === 0) {
+        setOrderOnChain(null);
+        setFeedback({ type: 'error', message: 'Không tìm thấy đơn này trên mạng hiện tại.' });
+        return;
+      }
       setOrderOnChain(order);
       setOrderIdState(targetId);
       if (isHex32(order.caseId) && order.caseId !== ZERO_BYTES32) setCaseId(order.caseId);
       if (address && !zeroAddress(escrowAddress)) void refreshClaimable();
       addLog(`Tra cứu Order on-chain thành công (${ORDER_STATUS_LABELS[order.status] || order.status})`, undefined, settlementChainId);
+      if (sameAddress(order.buyer, address)) {
+        // Index the confirmed purchase for the buyer's list. A temporary API
+        // failure must never turn a confirmed on-chain purchase into an error.
+        void fetch(`/api/day3/orders/${targetId}`, { cache: 'no-store' })
+          .then(response => { if (response.ok) void boughtOrders.refetch(); })
+          .catch(() => {});
+      }
     } catch (error) {
       setFeedback(operationError(error, 'Không tra cứu được đơn hàng.'));
     } finally {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!requestedOrder) return;
+    setOrderIdState(requestedOrder);
+    if (settlementClient && !zeroAddress(orderManagerAddress)) void fetchOrder(requestedOrder);
+    // Reload when a return link opens or the local manifest finishes loading.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedOrder, settlementClient, orderManagerAddress]);
 
   // --- Chain switch helper: switching is asynchronous, so never send a tx in
   // the same tick on the wrong chain. Ask the user to press the action again.
@@ -843,7 +886,7 @@ export default function Day3Page() {
       setOrderIdState(signedQuote.orderId);
       addLog(`Order đã tạo thành công: ${signedQuote.orderId}`, receipt.transactionHash, settlementChainId);
       await fetchOrder(signedQuote.orderId);
-      setFeedback({ type: 'success', message: 'Đã mua dịch vụ. Bạn có thể gửi tài liệu cho Service Agent.' });
+      setFeedback({ type: 'success', message: 'Đã mua dịch vụ. Mở AI của đơn để gửi tài liệu và đặt câu hỏi.' });
     } catch (error) {
       setFeedback(operationError(error, 'Không mua được dịch vụ. Kiểm tra giá, địa chỉ Buyer và hạn của quote.'));
     } finally {
@@ -869,7 +912,7 @@ export default function Day3Page() {
     try {
       // The backend scope uses the settlement chain id even when the wallet is
       // currently focused on a different network.
-      const scope = `${settlementChainId}:${orderManagerAddress.toLowerCase()}`;
+      const scope = orderScope;
       const lookup = await fetch(`/api/day3/orders/${id}`, { cache: 'no-store' });
       const order = await lookup.json();
       if (lookup.status === 404) throw new Error('Chưa tìm thấy đơn đã mua. Hãy hoàn tất Mua dịch vụ hoặc nhập đúng Order ID của đơn đã xác nhận.');
@@ -907,6 +950,8 @@ export default function Day3Page() {
         ...data.result,
         mode: data.mode,
         hash: data.resultHash,
+        orderId: id,
+        buyer: address,
       });
       setSellerResultHash(data.resultHash);
 
@@ -1525,7 +1570,7 @@ export default function Day3Page() {
           {activeTab === 'marketplace' && (
             <>
               {/* Step 1: Browse Listing */}
-              <section className={styles.panel}>
+              <section id="service-listing" className={styles.panel}>
                 <h2>Document Summary Agent</h2>
                 <p>
                   Nhận văn bản/hợp đồng đầu vào, phân tích và trích xuất tóm tắt ngắn, ý chính và các điều khoản cảnh báo rủi
@@ -1661,9 +1706,44 @@ export default function Day3Page() {
                 </div>
               </section>
 
+              <section id="my-services" className={styles.panel}>
+                <h2>Dịch vụ đã mua</h2>
+                {!address ? (
+                  <p>Kết nối ví Buyer để xem đơn của bạn.</p>
+                ) : (
+                  <>
+                    {boughtOrders.isFetching && <p role="status">Đang tải danh sách đơn…</p>}
+                    {boughtOrders.isError && <FeedbackNotice feedback={operationError(boughtOrders.error, 'Không tải được đơn đã mua.')} />}
+                    {boughtOrders.data?.length ? (
+                      <ul className={styles.purchasedOrders} aria-label="Các đơn gần đây">
+                        {boughtOrders.data.map((order) => (
+                          <li key={order.orderId}>
+                            <div>
+                              <strong>Document Summary</strong>
+                              <p className={styles.hint}>{ORDER_STATUS_LABELS[order.status]} · {formatPayout(order.priceWei)}</p>
+                              <code className={styles.mono}>{order.orderId}</code>
+                            </div>
+                            <Link className={styles.btnAccent} href={`/day2?order=${order.orderId}`}>Mở AI</Link>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : !boughtOrders.isFetching && !boughtOrders.isError && (
+                      <p>Chưa thấy đơn nào. Bạn có thể tra cứu đơn cũ bằng Order ID bên dưới.</p>
+                    )}
+                    <button
+                      className={styles.btnSecondary}
+                      disabled={boughtOrders.isFetching || zeroAddress(orderManagerAddress)}
+                      onClick={() => void boughtOrders.refetch()}
+                    >
+                      Làm mới danh sách
+                    </button>
+                  </>
+                )}
+              </section>
+
               {/* Step 2: Order Management & AI Execution */}
-              <section className={styles.panel}>
-                <h2>2. Thực thi dịch vụ AI qua Backend API</h2>
+              <section id="service-order" className={styles.panel}>
+                <h2>Đơn và kết quả AI</h2>
 
                 <label className={styles.label} htmlFor="buyer-order-id">Order ID</label>
                 <div className={styles.fieldAction}>
@@ -1712,6 +1792,14 @@ export default function Day3Page() {
                         <span className={`${styles.statusVal} ${styles.mono}`}>{orderOnChain.caseId}</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {isOrderBuyer && orderOnChain?.agentId === DEFAULT_AGENT_ID && (
+                  <div className={styles.actions}>
+                    <Link className={styles.btnAccent} href={`/day2?order=${orderOnChain.orderId}`}>
+                      Mở AI của đơn này
+                    </Link>
                   </div>
                 )}
 
@@ -2434,5 +2522,13 @@ export default function Day3Page() {
         </aside>
       </div>
     </main>
+  );
+}
+
+export default function Day3Page() {
+  return (
+    <Suspense fallback={<main className={styles.container}>Đang mở marketplace…</main>}>
+      <MarketplacePage />
+    </Suspense>
   );
 }

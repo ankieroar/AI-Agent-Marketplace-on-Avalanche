@@ -342,6 +342,33 @@
   overflow-wrap: anywhere;
 }
 
+.panel[id] {
+  scroll-margin-top: 5rem;
+}
+
+.purchasedOrders {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.8rem 0;
+}
+
+.purchasedOrders li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  padding: 0.75rem 0.9rem;
+  background: #11191f;
+  border: 1px solid #2b3d48;
+  border-radius: 10px;
+}
+
+.purchasedOrders li > div {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   overflow-wrap: anywhere;

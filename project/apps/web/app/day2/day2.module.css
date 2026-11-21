@@ -17,4 +17,31 @@
 .mono {font-family:monospace;overflow-wrap:anywhere;}
 .chatLog {max-height:24rem;overflow:auto;padding:.5rem .8rem;background:#10181f;border-radius:8px;}
 .chatLog p {white-space:pre-wrap;overflow-wrap:anywhere;}
+.workspaceNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem .75rem;
+}
+.workspaceNav a {
+  padding: .45rem .75rem;
+  border: 1px solid #426063;
+  border-radius: 7px;
+  background: #151e23;
+}
+.workspace :is(input, textarea, a, button, [tabindex]):focus-visible {
+  outline: 2px solid #83e8cc;
+  outline-offset: 2px;
+}
+.workspaceFeedback {
+  grid-column: 1 / -1;
+  padding: .7rem .9rem;
+  border-radius: 7px;
+  background: #182a32;
+  color: #d5e9ed;
+  overflow-wrap: anywhere;
+}
+.workspaceFeedback[role="alert"] {
+  background: #39232b;
+  color: #ffc2b9;
+}
 @media(max-width:740px){.grid{grid-template-columns:1fr;}}

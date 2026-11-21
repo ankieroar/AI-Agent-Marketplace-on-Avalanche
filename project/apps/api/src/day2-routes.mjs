@@ -10,7 +10,9 @@ import { encrypt } from './crypto.mjs';
 import { ApiError, day2Chain, day2CaseChain } from './day2-chain.mjs';
 import { chatWithModel, runPipeline } from '@warranty/agents';
 import { policySchema, summaryInputSchema } from '@warranty/schema';
-import { executeServiceOrder, saveBuyerServiceRequest } from './service-executor.mjs';
+import {
+  executeServiceOrder, readStoredServiceInput, readStoredServiceOutput, saveBuyerServiceRequest,
+} from './service-executor.mjs';
 import { prepareProof } from './prepare-proof.mjs';
 
 const hexId = z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform(s=>s.toLowerCase());
@@ -21,6 +23,10 @@ const prepareProofInput = z.object({
 const chatInput = z.object({messages:z.array(z.object({
   role:z.enum(['user','assistant']),content:z.string().trim().min(1).max(4000),
 }).strict()).min(1).max(12)}).strict();
+const orderChatInput = chatInput.refine(({ messages }) => messages.at(-1).role === 'user');
+const emptyInput = z.object({}).strict();
+const evmAddress = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform(s => s.toLowerCase());
+const summaryAgentId = ethers.id('document-summary');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const wrap = handler => (req,res,next) => Promise.resolve(handler(req,res)).catch(next);
 const buckets = new Map();
@@ -65,6 +71,21 @@ async function saveOrder(order) {
   await persistCheckoutPolicy(pool,order);
 }
 
+function isSummaryOrder(order) {
+  return order && !order.warranty && order.agentId === summaryAgentId && BigInt(order.priceWei) > 0n;
+}
+
+async function requireBuyerOrder(req, id, action, body) {
+  const chain = await day2Chain();
+  const owner = wallet(req, chain.scope, action, id, body);
+  const order = await chain.order(id);
+  if (!order) throw new ApiError(404, 'Confirmed order not found');
+  if (order.buyer !== owner) throw new ApiError(403, 'Only the confirmed buyer can use this service order');
+  if (!isSummaryOrder(order)) throw new ApiError(409, 'Service order is not eligible');
+  rateLimit(owner, action);
+  return order;
+}
+
 export const day2Routes = express.Router();
 day2Routes.post('/dispute-preview',wrap(async(req,res)=>{
   rateLimit(req.ip || 'local','dispute-preview');
@@ -100,6 +121,20 @@ day2Routes.get('/agents',wrap(async (req,res)=>{
       ON CONFLICT(agent_id) DO UPDATE SET listing=excluded.listing,updated_at=now()`,[listing.agentId,listing]);
   }
   res.json({scope:chain.scope,agents:listings});
+}));
+day2Routes.get('/buyers/:address/orders',wrap(async (req,res)=>{
+  const buyer = evmAddress.parse(req.params.address);
+  const chain = await day2Chain();
+  const { rows } = await pool.query(
+    'SELECT order_id FROM service_orders WHERE buyer=$1 ORDER BY updated_at DESC, order_id LIMIT 20',
+    [buyer],
+  );
+  // The local index locates candidates. The current chain determines which
+  // orders belong to this wallet and are available for this deployment.
+  const confirmed = await Promise.all(rows.map(row => chain.order(row.order_id)));
+  const orders = confirmed.filter(order => isSummaryOrder(order) && order.buyer === buyer)
+    .map(({ orderId, agentId, priceWei, status }) => ({ orderId, agentId, priceWei, status }));
+  res.set('Cache-Control', 'no-store').json({ scope: chain.scope, orders });
 }));
 day2Routes.get('/orders/:id',wrap(async (req,res)=>{
   const id=hexId.parse(req.params.id);
@@ -140,20 +175,36 @@ day2Routes.post('/cases/:id/prepare-proof',wrap(async (req,res)=>{
 day2Routes.post('/orders/:id/execute',wrap(async (req,res)=>{
   const id=hexId.parse(req.params.id);
   const body=summaryInputSchema.parse(req.body);
-  const chain=await day2Chain();
-  const owner=wallet(req,chain.scope,'execute',id,body);
-  const order=await chain.order(id);
-  if(!order) throw new ApiError(404,'Confirmed order not found');
-  if(order.buyer!==owner) throw new ApiError(403,'Only the confirmed buyer can execute');
-  if(order.warranty || order.agentId!==ethers.id('document-summary') || BigInt(order.priceWei)<=0n)
-    throw new ApiError(409,'Service order is not eligible');
-  rateLimit(owner,'execute');
+  const order=await requireBuyerOrder(req,id,'execute',body);
   await saveOrder(order);
   await saveBuyerServiceRequest({pool,orderId:id,buyer:order.buyer,input:body});
 
   const mode=process.env.DAY2_AI_MODE==='mock'?'mock':'openrouter';
   const result=await executeServiceOrder({pool,order,input:body,mode});
   res.status(result.status==='RUNNING'?202:200).json(result);
+}));
+day2Routes.post('/orders/:id/result',wrap(async (req,res)=>{
+  const id = hexId.parse(req.params.id);
+  const body = emptyInput.parse(req.body);
+  await requireBuyerOrder(req,id,'read-result',body);
+  const { rows: [row] } = await pool.query(
+    'SELECT status, mode, encrypted, result_hash FROM agent_outputs WHERE order_id=$1', [id],
+  );
+  res.set('Cache-Control', 'no-store').json(readStoredServiceOutput(row,id));
+}));
+day2Routes.post('/orders/:id/chat',wrap(async (req,res)=>{
+  const id = hexId.parse(req.params.id);
+  const body = orderChatInput.parse(req.body);
+  const order = await requireBuyerOrder(req,id,'order-chat',body);
+  const { rows: [row] } = await pool.query(`SELECT ao.status, ao.mode, ao.encrypted, ao.result_hash,
+      sr.ciphertext
+    FROM agent_outputs ao
+    LEFT JOIN service_requests sr ON sr.order_id=ao.order_id AND sr.input_hash=ao.input_hash AND sr.buyer=$2
+    WHERE ao.order_id=$1`, [id, order.buyer]);
+  const output = readStoredServiceOutput(row,id);
+  const document = row.ciphertext ? readStoredServiceInput(row,id).text : undefined;
+  const answer = await chatWithModel(body,{orderContext:{document,summary:output.result}});
+  res.set('Cache-Control', 'no-store').json({ orderId:id,...answer });
 }));
 day2Routes.post('/cases/upload',wrap(async (req,res)=>{
   const body=evidenceInput.parse(req.body);
