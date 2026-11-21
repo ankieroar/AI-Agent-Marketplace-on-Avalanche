@@ -31,10 +31,16 @@ export const day2ResolutionMessageSchema = z.object({
   nonce: uint,
 }).strict();
 export const summaryInputSchema = z.object({text:z.string().trim().min(1).max(12000)}).strict();
+export const summaryLimits = Object.freeze({
+  overviewCharacters: 2000,
+  itemCharacters: 500,
+  itemsPerList: 8,
+});
+const summaryItem = z.string().trim().min(1).max(summaryLimits.itemCharacters);
 export const summarySchema = z.object({
-  summary:z.string().trim().min(1).max(2000),
-  keyPoints:z.array(z.string().trim().min(1).max(500)).min(1).max(8),
-  caveats:z.array(z.string().trim().min(1).max(500)).max(8),
+  summary:z.string().trim().min(1).max(summaryLimits.overviewCharacters),
+  keyPoints:z.array(summaryItem).min(1).max(summaryLimits.itemsPerList),
+  caveats:z.array(summaryItem).max(summaryLimits.itemsPerList),
 }).strict();
 export const evidenceSchema=z.object({purchaseDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),faultDescription:z.string().max(2000),missingEvidence:z.array(z.string()).max(20)}).strict();
 export const policyResultSchema=z.object({eligible:z.boolean(),reasons:z.array(z.string()).max(20)}).strict();

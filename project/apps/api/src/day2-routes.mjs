@@ -86,6 +86,17 @@ async function requireBuyerOrder(req, id, action, body) {
   return order;
 }
 
+async function readBuyerWorkspace(order) {
+  const { rows: [row] } = await pool.query(`SELECT ao.status, ao.mode, ao.encrypted, ao.result_hash,
+      sr.ciphertext
+    FROM agent_outputs ao
+    LEFT JOIN service_requests sr ON sr.order_id=ao.order_id AND sr.input_hash=ao.input_hash AND sr.buyer=$2
+    WHERE ao.order_id=$1`, [order.orderId, order.buyer]);
+  const output = readStoredServiceOutput(row, order.orderId);
+  const document = row.ciphertext ? readStoredServiceInput(row, order.orderId).text : undefined;
+  return { ...output, document };
+}
+
 export const day2Routes = express.Router();
 day2Routes.post('/dispute-preview',wrap(async(req,res)=>{
   rateLimit(req.ip || 'local','dispute-preview');
@@ -106,12 +117,6 @@ day2Routes.post('/quote',wrap(async(req,res)=>{
     [quote.orderId,commitment,quote.agentId,quote.policyVersionHash,
       encrypt(witness,process.env.AES_KEY_HEX,policyAad(quote.orderId))]);
   res.set('Cache-Control','no-store').json({orderId:quote.orderId,policyCommitment:commitment});
-}));
-day2Routes.post('/chat',wrap(async(req,res)=>{
-  const body=chatInput.parse(req.body);
-  const owner=req.ip || 'local';
-  rateLimit(owner,'chat');
-  res.json(await chatWithModel(body));
 }));
 day2Routes.get('/agents',wrap(async (req,res)=>{
   const chain = await day2Chain();
@@ -144,7 +149,7 @@ day2Routes.get('/orders/:id',wrap(async (req,res)=>{
   await saveOrder(order);
   const {rows:[job]}=await pool.query('SELECT status,result_hash,mode FROM agent_outputs WHERE order_id=$1',[id]);
   const {rows:[request]}=await pool.query(
-    'SELECT source,input_hash,created_at FROM service_requests WHERE order_id=$1',[id]);
+    'SELECT source,input_hash,created_at FROM service_requests WHERE order_id=$1 AND buyer=$2',[id,order.buyer]);
   const {rows:[caseJob]}=await pool.query(
     'SELECT status,attempts,payout_amount,proof_hash,start_tx_hash,proof_tx_hash,last_error,updated_at FROM case_jobs WHERE order_id=$1',[id]);
   res.json({scope:chain.scope,...order,execution:job??null,
@@ -183,27 +188,30 @@ day2Routes.post('/orders/:id/execute',wrap(async (req,res)=>{
   const result=await executeServiceOrder({pool,order,input:body,mode});
   res.status(result.status==='RUNNING'?202:200).json(result);
 }));
+day2Routes.post('/orders/:id/retry',wrap(async (req,res)=>{
+  const id = hexId.parse(req.params.id);
+  const body = emptyInput.parse(req.body);
+  const order = await requireBuyerOrder(req,id,'retry-execute',body);
+  const { rows: [row] } = await pool.query(
+    'SELECT ciphertext FROM service_requests WHERE order_id=$1 AND buyer=$2', [id, order.buyer],
+  );
+  const input = readStoredServiceInput(row,id);
+  const result = await executeServiceOrder({pool,order,input,mode:process.env.DAY2_AI_MODE});
+  if (result.status === 'RUNNING') return res.status(202).json(result);
+  res.set('Cache-Control', 'no-store').json({ ...result, document: input.text });
+}));
 day2Routes.post('/orders/:id/result',wrap(async (req,res)=>{
   const id = hexId.parse(req.params.id);
   const body = emptyInput.parse(req.body);
-  await requireBuyerOrder(req,id,'read-result',body);
-  const { rows: [row] } = await pool.query(
-    'SELECT status, mode, encrypted, result_hash FROM agent_outputs WHERE order_id=$1', [id],
-  );
-  res.set('Cache-Control', 'no-store').json(readStoredServiceOutput(row,id));
+  const order = await requireBuyerOrder(req,id,'read-result',body);
+  res.set('Cache-Control', 'no-store').json(await readBuyerWorkspace(order));
 }));
 day2Routes.post('/orders/:id/chat',wrap(async (req,res)=>{
   const id = hexId.parse(req.params.id);
   const body = orderChatInput.parse(req.body);
   const order = await requireBuyerOrder(req,id,'order-chat',body);
-  const { rows: [row] } = await pool.query(`SELECT ao.status, ao.mode, ao.encrypted, ao.result_hash,
-      sr.ciphertext
-    FROM agent_outputs ao
-    LEFT JOIN service_requests sr ON sr.order_id=ao.order_id AND sr.input_hash=ao.input_hash AND sr.buyer=$2
-    WHERE ao.order_id=$1`, [id, order.buyer]);
-  const output = readStoredServiceOutput(row,id);
-  const document = row.ciphertext ? readStoredServiceInput(row,id).text : undefined;
-  const answer = await chatWithModel(body,{orderContext:{document,summary:output.result}});
+  const { document, result } = await readBuyerWorkspace(order);
+  const answer = await chatWithModel(body,{orderContext:{document,summary:result}});
   res.set('Cache-Control', 'no-store').json({ orderId:id,...answer });
 }));
 day2Routes.post('/cases/upload',wrap(async (req,res)=>{

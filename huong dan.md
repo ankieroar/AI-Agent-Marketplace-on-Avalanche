@@ -120,7 +120,7 @@ Ai có link Quick Tunnel mặc định đều có thể mở trang. Dùng dữ l
 Hai kịch bản bắt đầu bằng các bước chung:
 
 1. **Seller** đăng ký **Document Summary** nếu listing còn trống, nhập địa chỉ Buyer và ký quote. Gửi **quote JSON** cho Buyer.
-2. **Buyer** dán quote JSON và mua trên Fuji. Trong `/day3`, chọn đơn ở **Dịch vụ đã mua → Mở AI**. Workspace `/day2` cho phép ký tóm tắt tài liệu hoặc mở bản tóm tắt đã lưu, rồi hỏi đáp theo dữ liệu của đúng đơn. Gửi **Order ID** và **Result hash** cho Seller.
+2. **Buyer** dán quote JSON và mua trên Fuji. Trong `/day3`, chọn đơn ở **Dịch vụ đã mua → Tóm tắt & hỏi đáp**. Chọn **Tải tệp để tóm tắt** để đọc `.docx` hoặc `.txt` (UTF-8), tối đa 10 MB và 12.000 ký tự. Kiểm tra văn bản đã trích hoặc nhập trực tiếp, rồi chọn **Ký và tóm tắt**. OpenRouter nhận phần văn bản khi bạn ký gửi. Bạn có thể mở bản tóm tắt đã lưu và hỏi tiếp về đúng tài liệu của đơn. Gửi **Order ID** và **Result hash** cho Seller. Nếu lần tóm tắt gặp lỗi, chọn **Ký và thử lại tài liệu đã lưu**.
 3. **Seller** nhập Order ID và Result hash, sau đó ký **Mark Delivered**.
 
 Chọn **Về đơn hàng** trong workspace AI để mở lại đúng đơn trên `/day3` và xem trạng thái mới nhất. Với đơn cũ chưa có trong danh sách, tra cứu bằng **Order ID** trên `/day3` bằng ví Buyer. Lịch sử chat chỉ hiện trong phiên đang mở.

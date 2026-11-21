@@ -50,7 +50,6 @@ import {
 } from '../contracts';
 
 type Role = 'buyer' | 'seller' | 'reviewer';
-type Result = { summary: string; keyPoints: string[]; caveats: string[] };
 
 type SignedQuote = {
   buyer: `0x${string}`;
@@ -238,13 +237,6 @@ function parseQuote(raw: string): SignedQuote {
   return value as SignedQuote;
 }
 
-const EXAMPLE_DOC = `Hợp đồng dịch vụ thử nghiệm Hackathon:
-Bên B cam kết cung cấp dịch vụ tóm tắt hồ sơ trong vòng 24 giờ kể từ thời điểm nhận thanh toán.
-Giá dịch vụ: 0.01 AVAX.
-Cửa sổ mở khiếu nại: 3600 giây (1 giờ).
-Mức bồi hoàn tối đa khi có tranh chấp: 0.005 AVAX.
-Trường hợp bất khả kháng hoặc thiếu dữ liệu đầu vào cần thông báo cho bên A trong 2 giờ.`;
-
 function MarketplacePage() {
   const orderParam = useSearchParams().get('order')?.trim().toLowerCase();
   const requestedOrder = isHex32(orderParam) ? orderParam : null;
@@ -311,13 +303,9 @@ function MarketplacePage() {
 
   // --- Buyer / Marketplace States ---
   const [orderId, setOrderIdState] = useState<string>(requestedOrder ?? '');
-  const [documentText, setDocumentText] = useState(EXAMPLE_DOC);
   const [loadedOrder, setOrderOnChain] = useState<OrderView | null>(null);
   const orderOnChain = sameAddress(loadedOrder?.orderId, orderId.trim()) ? loadedOrder : null;
 
-  const [serviceResult, setAiResult] = useState<(Result & { mode: string; hash: string; orderId: string; buyer: string }) | null>(null);
-  const aiResult = sameAddress(serviceResult?.orderId, orderId.trim()) && sameAddress(serviceResult?.buyer, address)
-    ? serviceResult : null;
   const [caseId, setCaseId] = useState<string>('');
   const [evidenceText, setEvidenceText] = useState('Dịch vụ thiếu các điều khoản bắt buộc và không hoàn thành đúng tiến độ.');
 
@@ -886,80 +874,9 @@ function MarketplacePage() {
       setOrderIdState(signedQuote.orderId);
       addLog(`Order đã tạo thành công: ${signedQuote.orderId}`, receipt.transactionHash, settlementChainId);
       await fetchOrder(signedQuote.orderId);
-      setFeedback({ type: 'success', message: 'Đã mua dịch vụ. Mở AI của đơn để gửi tài liệu và đặt câu hỏi.' });
+      setFeedback({ type: 'success', message: 'Đã mua dịch vụ. Chọn Tóm tắt & hỏi đáp để gửi tài liệu cho đơn.' });
     } catch (error) {
       setFeedback(operationError(error, 'Không mua được dịch vụ. Kiểm tra giá, địa chỉ Buyer và hạn của quote.'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // --- 2. Execute AI Service via real backend API ---
-  async function handleExecuteService() {
-    const id = orderId.trim().toLowerCase();
-    if (!isHex32(id)) {
-      setFeedback({ type: 'error', message: 'Nhập Order ID hợp lệ của đơn đã mua để chạy AI Service.' });
-      return;
-    }
-    if (!address) {
-      setFeedback({ type: 'error', message: 'Vui lòng kết nối ví Buyer của order này.' });
-      return;
-    }
-    setBusy(true);
-    setFeedback({ type: 'info', message: 'Đang kiểm tra đơn đã mua...' });
-    setAiResult(null);
-
-    try {
-      // The backend scope uses the settlement chain id even when the wallet is
-      // currently focused on a different network.
-      const scope = orderScope;
-      const lookup = await fetch(`/api/day3/orders/${id}`, { cache: 'no-store' });
-      const order = await lookup.json();
-      if (lookup.status === 404) throw new Error('Chưa tìm thấy đơn đã mua. Hãy hoàn tất Mua dịch vụ hoặc nhập đúng Order ID của đơn đã xác nhận.');
-      if (!lookup.ok) throw new Error(order.error || 'Không kiểm tra được đơn qua backend.');
-      if (order.scope !== scope) throw new Error('Web và backend đang dùng khác mạng hoặc địa chỉ ServiceOrderManager.');
-      if (!sameAddress(order.buyer, address)) throw new Error('Hãy kết nối đúng ví Buyer của đơn này.');
-      setFeedback({ type: 'info', message: 'Đang ký yêu cầu xác thực bằng ví Buyer...' });
-      const body = JSON.stringify({ text: documentText.trim() });
-      const expires = Math.floor(Date.now() / 1000) + 240;
-      const digest = sha256(toBytes(body)).slice(2);
-      const message = ['Warranty Day 2 request', scope, 'execute', id, String(expires), digest].join('\n');
-
-      const signature = await signMessageAsync({ message });
-      addLog('Đã ký xác thực ví Buyer. Đang gọi Backend Service Agent runtime...');
-
-      const res = await fetch(`/api/day3/orders/${id}/execute`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Wallet-Expires': String(expires),
-          'X-Wallet-Signature': signature,
-        },
-        body,
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Lỗi khi gọi Service Agent runtime');
-
-      if (res.status === 202) {
-        setFeedback({ type: 'info', message: 'Order đang được xử lý ngầm trong hàng đợi. Vui lòng thử lại sau giây lát.' });
-        return;
-      }
-
-      setAiResult({
-        ...data.result,
-        mode: data.mode,
-        hash: data.resultHash,
-        orderId: id,
-        buyer: address,
-      });
-      setSellerResultHash(data.resultHash);
-
-      addLog(`Service Agent hoàn tất phân tích (Mode: ${data.mode})`);
-      await fetchOrder();
-      setFeedback({ type: 'success', message: 'Service Agent đã trả kết quả. Gửi Order ID và Result hash cho Seller để bàn giao.' });
-    } catch (error) {
-      setFeedback(operationError(error, 'Service Agent không trả được kết quả.'));
     } finally {
       setBusy(false);
     }
@@ -1723,7 +1640,7 @@ function MarketplacePage() {
                               <p className={styles.hint}>{ORDER_STATUS_LABELS[order.status]} · {formatPayout(order.priceWei)}</p>
                               <code className={styles.mono}>{order.orderId}</code>
                             </div>
-                            <Link className={styles.btnAccent} href={`/day2?order=${order.orderId}`}>Mở AI</Link>
+                            <Link className={styles.btnAccent} href={`/day2?order=${order.orderId}`}>Tóm tắt & hỏi đáp</Link>
                           </li>
                         ))}
                       </ul>
@@ -1741,9 +1658,9 @@ function MarketplacePage() {
                 )}
               </section>
 
-              {/* Step 2: Order Management & AI Execution */}
+              {/* Step 2: Order Management */}
               <section id="service-order" className={styles.panel}>
-                <h2>Đơn và kết quả AI</h2>
+                <h2>Chi tiết đơn hàng</h2>
 
                 <label className={styles.label} htmlFor="buyer-order-id">Order ID</label>
                 <div className={styles.fieldAction}>
@@ -1798,50 +1715,11 @@ function MarketplacePage() {
                 {isOrderBuyer && orderOnChain?.agentId === DEFAULT_AGENT_ID && (
                   <div className={styles.actions}>
                     <Link className={styles.btnAccent} href={`/day2?order=${orderOnChain.orderId}`}>
-                      Mở AI của đơn này
+                      Tóm tắt & hỏi đáp cho đơn này
                     </Link>
                   </div>
                 )}
 
-                <label className={styles.label}>Văn bản mẫu cần tóm tắt:</label>
-                <textarea
-                  className={styles.textarea}
-                  rows={4}
-                  value={documentText}
-                  onChange={(e) => setDocumentText(e.target.value)}
-                />
-
-                <div className={styles.actions}>
-                  <button
-                    className={styles.btnAccent}
-                    disabled={busy || !orderId || !isConnected}
-                    onClick={handleExecuteService}
-                  >
-                    Ký ví & Gọi Service Agent
-                  </button>
-                </div>
-
-                {aiResult && (
-                  <div className={styles.resultBox}>
-                    <p style={{ margin: '0 0 0.5rem', fontWeight: 600, color: '#83e8cc' }}>
-                      Kết quả từ AI Agent ({aiResult.mode}):
-                    </p>
-                    <p>{aiResult.summary}</p>
-                    <ul className={styles.keyPoints}>
-                      {aiResult.keyPoints?.map((pt, i) => (
-                        <li key={i}>{pt}</li>
-                      ))}
-                    </ul>
-                    {aiResult.caveats?.length > 0 && <div className={styles.caveat}>{aiResult.caveats.join(' ')}</div>}
-                    <p className={`${styles.mono}`} style={{ marginTop: '0.8rem', fontSize: '0.8rem', color: '#7a8e99' }}>
-                      Result Hash: {aiResult.hash}
-                    </p>
-                    <p className={styles.hint}>
-                      Kết quả này do backend trả về. Trạng thái on-chain chỉ chuyển sang Delivered khi Seller ký
-                      <strong> markDelivered</strong> với result hash.
-                    </p>
-                  </div>
-                )}
               </section>
 
               {/* Step 3: Accept or Open Dispute */}
@@ -2506,7 +2384,7 @@ function MarketplacePage() {
                 <strong>Mua dịch vụ:</strong> chuyển sang ví Buyer, kiểm tra quote khớp rồi bấm Mua để khóa AVAX vào escrow.
               </li>
               <li>
-                <strong>Chạy AI:</strong> ký yêu cầu bằng ví Buyer để gọi backend Document Summary Agent.
+                <strong>Chạy AI:</strong> chọn đơn trong Dịch vụ đã mua, mở Tóm tắt & hỏi đáp và ký bằng ví Buyer.
               </li>
               <li>
                 <strong>Seller bàn giao:</strong> nhập result hash và gọi markDelivered; sau đó Seller withdraw khi escrow ghi có.

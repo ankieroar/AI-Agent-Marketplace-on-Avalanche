@@ -121,13 +121,15 @@ Nếu dùng production build, chạy `npm.cmd run build:web` sau khi dot-source 
 | Vai | Thao tác |
 | --- | --- |
 | Seller | Chọn listing, nhập địa chỉ Buyer, **Ký EIP-712 Quote**. Chuyển quote JSON nếu Buyer ở trình duyệt khác. |
-| Buyer | **Dán quote JSON**, mua đúng giá rồi chọn đơn trong **Dịch vụ đã mua → Mở AI**. Ký chạy tóm tắt hoặc mở kết quả đã lưu trong workspace `/day2`, sau đó có thể hỏi đáp theo đơn. Gửi Order ID và Result hash cho Seller. |
+| Buyer | **Dán quote JSON**, mua đúng giá rồi chọn đơn trong **Dịch vụ đã mua → Tóm tắt & hỏi đáp**. Ký chạy tóm tắt hoặc mở kết quả đã lưu trong workspace `/day2`, sau đó có thể hỏi đáp theo đơn. Gửi Order ID và Result hash cho Seller. |
 | Seller | Tra Order ID, dùng Result hash để **Mark Delivered**. |
 | Buyer | Tra lại order. **Chấp nhận** để escrow ghi có cho Seller, hoặc **Mở tranh chấp** trong thời hạn và **Ký & gửi bằng chứng**. |
 | Reviewer | Tra Case ID, **Bắt đầu phân tích**. Có thể chạy ba Dispute Agents với nội dung bằng chứng để lấy khuyến nghị. Nhập số wei hoàn tiền, **Tạo proof bằng WASM**, **Nộp Proof**, rồi **Chuyển vào Merchant Review** và ký duyệt hoặc từ chối. Dùng **Gửi phán quyết tới escrow** để áp dụng quyết định. |
 | Người nhận tiền | Mở phần số dư escrow, **Làm mới số dư** rồi **Withdraw** bằng ví của mình. |
 
 Trong workspace AI, nút **Về đơn hàng** mở lại đúng Order ID trên `/day3`. Mỗi lượt hỏi dùng chữ ký của Buyer và dữ liệu của đơn đã xác nhận. Lịch sử chat nằm trong phiên hiện tại. Nếu danh sách chưa có đơn cũ, Buyer có thể tra cứu theo Order ID để thêm đơn vào danh sách.
+
+Mỗi đơn gắn với một tài liệu. Nếu lần tóm tắt gặp lỗi, dùng **Ký và thử lại tài liệu đã lưu** để gửi lại cùng tài liệu. Muốn tóm tắt tài liệu khác, tạo đơn mới.
 
 Role do địa chỉ ví và contract quyết định. Phần **Tạo proof bằng WASM** đọc witness mã hóa từ PostgreSQL, đối chiếu với commitment lúc mua và dùng 15 public inputs. ProofGate và Solidity verifier quyết định proof có hợp lệ hay không. Người review chịu trách nhiệm về quyết định. Khuyến nghị AI có thể sai. Reviewer có thể từ chối mà không cần proof hợp lệ. Ví dụ với giá `0.01 AVAX`, số hoàn thử `5000000000000000 wei` là `0.005 AVAX`. Server trả số tiền thực sự được chứng minh sau khi đối chiếu giới hạn policy và escrow.
 

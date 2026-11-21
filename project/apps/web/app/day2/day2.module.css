@@ -32,6 +32,25 @@
   outline: 2px solid #83e8cc;
   outline-offset: 2px;
 }
+.filePicker {position: relative;}
+.filePicker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+}
+.filePicker label {
+  display: inline-block;
+  padding: .45rem .75rem;
+  color: #d5e9ed;
+  background: #263b46;
+  border: 1px solid #426063;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.filePicker input:focus-visible + label {outline: 2px solid #83e8cc;outline-offset: 2px;}
+.filePicker input:disabled + label {opacity: .6;cursor: default;}
+.fileStatus {color:#83e8cc;overflow-wrap:anywhere;}
 .workspaceFeedback {
   grid-column: 1 / -1;
   padding: .7rem .9rem;
@@ -44,4 +63,12 @@
   background: #39232b;
   color: #ffc2b9;
 }
+.sourceDocument {
+  margin-block: 1rem;
+  padding: .7rem .9rem;
+  border: 1px solid #426063;
+  border-radius: 7px;
+}
+.sourceDocument summary {cursor:pointer;color:#a3ecd5;}
+.sourceDocument p {max-height:18rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;}
 @media(max-width:740px){.grid{grid-template-columns:1fr;}}

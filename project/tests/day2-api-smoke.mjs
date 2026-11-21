@@ -30,8 +30,10 @@ try {
   const url='/orders/'+fixture.paid+'/execute';
   const resultUrl='/orders/'+fixture.paid+'/result';
   const chatUrl='/orders/'+fixture.paid+'/chat';
+  const retryUrl='/orders/'+fixture.paid+'/retry';
   const body={text:'Synthetic order 001: delivery takes a day; start time is unspecified.'};
   assert.equal((await request(resultUrl,'read-result',fixture.paid,{})).status,409);
+  assert.equal((await request(retryUrl,'retry-execute',fixture.paid,{})).status,409);
   assert.equal((await request(url,'execute',fixture.paid,body,outsider)).status,403);
   const completed=await request(url,'execute',fixture.paid,body);
   assert.equal(completed.status,200,JSON.stringify(completed.data));
@@ -43,9 +45,15 @@ try {
   assert.equal(loaded.status,200);
   assert.deepEqual(loaded.data.result,completed.data.result);
   assert.equal(loaded.data.resultHash,completed.data.resultHash);
+  assert.equal(loaded.data.document,body.text);
+  assert.equal((await request(retryUrl,'retry-execute',fixture.paid,{},outsider)).status,403);
+  const retried=await request(retryUrl,'retry-execute',fixture.paid,{});
+  assert.equal(retried.status,200);
+  assert.equal(retried.data.resultHash,completed.data.resultHash);
   const chat={messages:[{role:'user',content:'How long does delivery take?'}]};
   assert.equal((await request(chatUrl,'order-chat',fixture.paid,chat,outsider)).status,403);
   assert.equal((await request(chatUrl,'chat',fixture.paid,chat)).status,403);
+  assert.equal((await fetch(base+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(chat)})).status,404);
   const list=await(await fetch(base+'/buyers/'+fixture.buyer+'/orders')).json();
   assert.equal(list.scope,scope);
   assert(list.orders.some(order=>order.orderId===fixture.paid));

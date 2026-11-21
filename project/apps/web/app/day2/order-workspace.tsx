@@ -1,15 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, type ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { formatEther, sha256, toBytes } from 'viem';
 import { useAccount, useConnect, useSignMessage, useSwitchChain } from 'wagmi';
 import { DEFAULT_AGENT_ID, FUJI_CHAIN_ID, LOCAL_CHAIN_ID, ORDER_STATUS_LABELS } from '../contracts';
+import { MAX_DOCUMENT_CHARACTERS, readDocumentFile } from './document-file';
 import styles from './day2.module.css';
 
-export type Result = { summary: string; keyPoints: string[]; caveats: string[] };
-type Execution = { result: Result; resultHash: string; mode: string };
+type Result = { summary: string; keyPoints: string[]; caveats: string[] };
+type Execution = { result: Result; resultHash: string; mode: string; document?: string };
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
 type ServiceOrder = {
   orderId: string;
@@ -20,9 +21,10 @@ type ServiceOrder = {
   status: number;
   warranty: boolean;
   execution: { status: string } | null;
+  request: { source: string } | null;
 };
 
-export function Summary({ result }: { result: Result }) {
+function Summary({ result }: { result: Result }) {
   return (
     <>
       <p>{result.summary}</p>
@@ -69,8 +71,8 @@ export function OrderWorkspace({ orderId }: { orderId: string }) {
         <Link href="/day3#service-listing">Mua dịch vụ</Link>
       </nav>
       <header>
-        <h1>Document Summary</h1>
-        <p>Tóm tắt và hỏi đáp trong đơn đã mua.</p>
+        <h1>Tóm tắt và hỏi đáp tài liệu</h1>
+        <p>Dịch vụ Document Summary · Order ID</p>
         <p className={styles.mono}>{orderId}</p>
       </header>
       <section className={styles.panel} aria-label="Thông tin đơn và ví Buyer">
@@ -108,32 +110,63 @@ export function OrderWorkspace({ orderId }: { orderId: string }) {
         {(connectError || switchError) && <p role="alert">{formatError(connectError || switchError, 'Kiểm tra lại kết nối ví.')}</p>}
       </section>
       {canUseOrder && (
-        <OrderActions key={`${order.scope}:${orderId}:${address}`} order={order} />
+        <OrderActions key={`${order.scope}:${orderId}:${address}`} order={order} refreshOrder={orderQuery.refetch} />
       )}
     </main>
   );
 }
 
-function OrderActions({ order }: { order: ServiceOrder }) {
+type Action = 'execute' | 'retry' | 'result' | 'chat';
+const ORDER_ACTIONS = {
+  execute: 'execute',
+  retry: 'retry-execute',
+  result: 'read-result',
+  chat: 'order-chat',
+} as const;
+
+function OrderActions({ order, refreshOrder }: { order: ServiceOrder; refreshOrder: () => Promise<unknown> }) {
   const { signMessageAsync } = useSignMessage();
   const [document, setDocument] = useState('');
+  const [readingFile, setReadingFile] = useState(false);
+  const [fileName, setFileName] = useState('');
+  const [fileError, setFileError] = useState('');
   const [execution, setExecution] = useState<Execution>();
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState('');
   const [model, setModel] = useState('');
-  const [pending, setPending] = useState<'execute' | 'result' | 'chat'>();
+  const [pending, setPending] = useState<Action>();
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const canRun = order.status === 1 && order.execution?.status !== 'delivered';
+  const hasSummary = order.execution?.status === 'delivered';
+  const canRun = order.status === 1 && !hasSummary;
+  const hasSavedDocument = !!order.request;
 
-  async function signedRequest(endpoint: string, action: string, input: object) {
+  async function importDocument(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file || readingFile || pending) return;
+    setReadingFile(true);
+    setFileError('');
+    try {
+      setDocument(await readDocumentFile(file));
+      setFileName(file.name);
+      setError('');
+    } catch (cause) {
+      setFileError(formatError(cause, 'Không đọc được tệp. Hãy thử lại hoặc dán văn bản.'));
+    } finally {
+      setReadingFile(false);
+    }
+  }
+
+  async function signedRequest(endpoint: Action, input: object) {
     const body = JSON.stringify(input);
     const expires = Math.floor(Date.now() / 1000) + 240;
     const digest = sha256(toBytes(body)).slice(2);
-    const message = ['Warranty Day 2 request', order.scope, action, order.orderId, String(expires), digest].join('\n');
+    const message = ['Warranty Day 2 request', order.scope, ORDER_ACTIONS[endpoint], order.orderId, String(expires), digest].join('\n');
     setStatus('Xác nhận chữ ký trong ví Buyer.');
     const signature = await signMessageAsync({ message });
-    setStatus(endpoint === 'chat' ? 'AI đang trả lời…' : 'Đang tải kết quả của đơn…');
+    setStatus(endpoint === 'chat' ? 'AI đang trả lời câu hỏi…' : endpoint === 'result'
+      ? 'Đang mở kết quả của đơn…' : 'AI đang tóm tắt tài liệu…');
     const response = await fetch(`/api/day2/orders/${order.orderId}/${endpoint}`, {
       method: 'POST',
       headers: {
@@ -148,23 +181,24 @@ function OrderActions({ order }: { order: ServiceOrder }) {
     return { data, inProgress: response.status === 202 };
   }
 
-  async function loadSummary(run: boolean) {
-    if (pending || (run && (!canRun || !document.trim()))) return;
-    setPending(run ? 'execute' : 'result');
+  async function loadSummary(action: Exclude<Action, 'chat'>) {
+    const text = document.trim();
+    if (pending || (action === 'execute' && (readingFile || !canRun || !text || hasSavedDocument))) return;
+    setPending(action);
     setError('');
     try {
-      const { data, inProgress } = run
-        ? await signedRequest('execute', 'execute', { text: document.trim() })
-        : await signedRequest('result', 'read-result', {});
+      const { data, inProgress } = await signedRequest(action, action === 'execute' ? { text } : {});
       if (inProgress) {
-        setStatus('Agent đang thực thi. Hãy thử lại sau với cùng nội dung tài liệu.');
+        setStatus('AI đang xử lý tài liệu của đơn. Hãy chờ rồi kiểm tra lại.');
+        await refreshOrder();
         return;
       }
-      setExecution(data);
+      setExecution(action === 'execute' ? { ...data, document: text } : data);
       setStatus('');
     } catch (cause) {
       setError(formatError(cause, 'Không mở được kết quả của đơn.'));
       setStatus('');
+      if (action !== 'result') await refreshOrder();
     } finally {
       setPending(undefined);
     }
@@ -180,7 +214,7 @@ function OrderActions({ order }: { order: ServiceOrder }) {
     setPending('chat');
     setError('');
     try {
-      const { data } = await signedRequest('chat', 'order-chat', { messages });
+      const { data } = await signedRequest('chat', { messages });
       setHistory([...next, { role: 'assistant', content: data.reply }]);
       setQuestion('');
       setModel(data.model);
@@ -195,30 +229,58 @@ function OrderActions({ order }: { order: ServiceOrder }) {
   return (
     <div className={styles.grid}>
       <section className={styles.panel} aria-label="Tóm tắt và Result hash">
-        <h2>Kết quả dịch vụ</h2>
+        <h2>Tài liệu và bản tóm tắt</h2>
         {execution ? (
           <>
+            <p className={styles.status}>{execution.mode === 'mock' ? 'Tóm tắt mô phỏng' : 'Đã tóm tắt qua OpenRouter'}</p>
             <Summary result={execution.result} />
+            {execution.document && (
+              <details className={styles.sourceDocument}>
+                <summary>Xem tài liệu đã gửi cho đơn</summary>
+                <p>{execution.document}</p>
+              </details>
+            )}
             <p className={styles.note}>Gửi Order ID và Result hash này cho Seller để xác nhận bàn giao.</p>
             <code className={styles.mono}>{execution.resultHash}</code>
           </>
+        ) : hasSummary ? (
+          <button disabled={!!pending} onClick={() => void loadSummary('result')}>Ký để mở bản tóm tắt đã lưu</button>
+        ) : canRun && hasSavedDocument ? (
+          <>
+            <p>Đơn đã gắn với một tài liệu. Bạn có thể tiếp tục tóm tắt chính tài liệu đó mà không cần nhập lại.</p>
+            <button disabled={!!pending} onClick={() => void loadSummary('retry')}>
+              {order.execution?.status === 'running' ? 'Ký để kiểm tra bản tóm tắt' : 'Ký và thử lại tài liệu đã lưu'}
+            </button>
+          </>
         ) : canRun ? (
           <>
-            <label htmlFor="order-document">Tài liệu cần tóm tắt</label>
-            <textarea id="order-document" rows={5} value={document} maxLength={12000} disabled={!!pending}
+            <div className={styles.filePicker}>
+              <input id="order-document-file" type="file"
+                accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                aria-describedby="order-document-file-hint" disabled={!!pending || readingFile} onChange={importDocument} />
+              <label htmlFor="order-document-file">Tải tệp để tóm tắt</label>
+            </div>
+            <p className={styles.note} id="order-document-file-hint">.docx hoặc .txt (UTF-8), tối đa 10 MB và 12.000 ký tự.</p>
+            {fileError && <p className={styles.workspaceFeedback} role="alert">{fileError}</p>}
+            {readingFile && <p className={styles.note} role="status">Đang đọc tệp…</p>}
+            {!readingFile && fileName && (
+              <p className={styles.fileStatus} role="status">Đã trích văn bản từ {fileName}. Kiểm tra nội dung bên dưới trước khi ký.</p>
+            )}
+            <label htmlFor="order-document">Văn bản cần tóm tắt</label>
+            <textarea id="order-document" rows={5} value={document} maxLength={MAX_DOCUMENT_CHARACTERS}
+              disabled={!!pending || readingFile} placeholder="Dán, nhập hoặc chỉnh sửa văn bản đã trích từ tệp"
               onChange={event => setDocument(event.target.value)} />
+            <p className={styles.note}>Mỗi đơn dùng một tài liệu. Nếu bạn muốn gửi tài liệu khác, hãy tạo đơn mới.</p>
             <div className={styles.actions}>
-              <button disabled={!!pending || !document.trim()} onClick={() => void loadSummary(true)}>Ký và tóm tắt</button>
+              <button disabled={!!pending || readingFile || !document.trim()} onClick={() => void loadSummary('execute')}>Ký và tóm tắt</button>
             </div>
           </>
-        ) : order.execution?.status === 'delivered' ? (
-          <button disabled={!!pending} onClick={() => void loadSummary(false)}>Ký để mở kết quả đã lưu</button>
         ) : (
           <p>Đơn này chưa có kết quả tóm tắt.</p>
         )}
       </section>
       <section className={styles.panel} aria-label="Hỏi đáp theo đơn">
-        <h2>Hỏi AI về tài liệu</h2>
+        <h2>Hỏi tiếp về tài liệu của đơn</h2>
         {!execution ? (
           <p>Tóm tắt tài liệu hoặc mở kết quả đã lưu để bắt đầu hỏi đáp.</p>
         ) : (
@@ -231,8 +293,9 @@ function OrderActions({ order }: { order: ServiceOrder }) {
                 ))}
               </div>
             )}
-            <label htmlFor="order-question">Câu hỏi tiếp theo</label>
+            <label htmlFor="order-question">Câu hỏi về tài liệu</label>
             <textarea id="order-question" rows={3} maxLength={2000} value={question} disabled={!!pending}
+              placeholder="Ví dụ: Tài liệu quy định thời hạn bàn giao bao lâu?"
               onChange={event => setQuestion(event.target.value)} />
             <button disabled={!!pending || !question.trim()} onClick={() => void sendQuestion()}>Ký và gửi câu hỏi</button>
             {model && <p className={styles.note}>Model trả lời: {model}</p>}

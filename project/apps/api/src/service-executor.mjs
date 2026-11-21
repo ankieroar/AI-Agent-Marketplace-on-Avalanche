@@ -29,13 +29,14 @@ export async function saveBuyerServiceRequest({ pool, orderId, buyer, input }) {
   const ciphertext = encrypt(parsed, process.env.AES_KEY_HEX, serviceInputAad(orderId));
   const { rowCount } = await pool.query(`INSERT INTO service_requests(
       order_id, buyer, input_hash, ciphertext, source)
-    VALUES($1,$2,$3,$4,'buyer')
+    SELECT $1,$2,$3,$4,'buyer'
+    WHERE NOT EXISTS (SELECT 1 FROM agent_outputs WHERE order_id=$1 AND input_hash <> $3)
     ON CONFLICT(order_id) DO UPDATE SET ciphertext=excluded.ciphertext,
       source=excluded.source, created_at=now()
-    WHERE service_requests.input_hash = excluded.input_hash
+    WHERE service_requests.input_hash = excluded.input_hash AND service_requests.buyer = excluded.buyer
     RETURNING order_id`, [orderId, buyer, inputHash, ciphertext]);
   if (!rowCount) {
-    throw new ApiError(409, 'Order already has a different execution input');
+    throw new ApiError(409, 'Đơn đã gắn với tài liệu khác. Mở kết quả hoặc chạy lại tài liệu đã lưu trong workspace.');
   }
   return { inputHash };
 }
